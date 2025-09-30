@@ -1,0 +1,39 @@
+# Binaries
+server.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build artifacts
+backend/bin/
+backend/build/
+backend/dist/
+backend/**/vendor/
+**/*.test
+**/*.out
+**/coverage*/
+
+# Python cache and venv
+**/__pycache__/**
+**/*.py[cod]
+**/*.pyo
+**/*.egg-info/**
+.venv/**
+venv/**
+.pytest_cache/**
+.mypy_cache/**
+
+# Airflow logs and local state
+ops/logs/**
+ops/airflow/logs/**
+ops/airflow/dags/__pycache__/**
+ops/dags/__pycache__/**
+ops/airflow/.airflow/**
+
+# IDE and OS junk
+**/.DS_Store
+**/Thumbs.db
+**/.idea/**
+**/.vscode/**
+**/node_modules/**
