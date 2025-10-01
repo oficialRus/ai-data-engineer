@@ -1,35 +1,40 @@
 package usecase
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/user/ai-data-engineer/backend/internal/config"
 	infra "github.com/user/ai-data-engineer/backend/internal/infra/ws"
 )
 
 type AnalyzeService struct {
 	Hub *infra.Hub
+	Cfg config.AppConfig
 }
 
 type PipelineService struct {
 	Hub *infra.Hub
+	Cfg config.AppConfig
 }
 
 func (s *AnalyzeService) StartAnalyze(preview json.RawMessage) (string, error) {
 	id := uuid.NewString()
-	go s.simulateAnalyze(id)
+	go s.runAnalyze(id, preview)
 	return id, nil
 }
 
 func (s *PipelineService) CreatePipeline(req json.RawMessage) (string, error) {
 	id := uuid.NewString()
-	go s.simulatePipeline(id)
+	go s.runPipeline(id, req)
 	return id, nil
 }
 
-func (s *AnalyzeService) simulateAnalyze(id string) {
+func (s *AnalyzeService) runAnalyze(id string, preview json.RawMessage) {
 	scope := "analyze"
 	s.Hub.Broadcast(scope, id, map[string]any{"type": "queued", "data": map[string]any{"id": id, "scope": scope}})
 	time.Sleep(200 * time.Millisecond)
@@ -50,42 +55,54 @@ func (s *AnalyzeService) simulateAnalyze(id string) {
 		s.Hub.Broadcast(scope, id, map[string]any{"type": "log", "data": map[string]any{"id": id, "scope": scope, "level": "info", "line": msg}})
 		time.Sleep(200 * time.Millisecond)
 	}
-	payload := map[string]any{
-		"recommendation": map[string]any{
-			"target":        "clickhouse",
-			"confidence":    0.85,
-			"rationale":     "Числовые метрики и агрегации подходят для ClickHouse",
-			"schedule_hint": "*/30 * * * *",
-		},
-		"ddl": map[string]any{
-			"clickhouse": "CREATE TABLE ... ENGINE = MergeTree",
-			"postgresql": "CREATE TABLE ...",
-			"hdfs":       "PARQUET schema ...",
-		},
+	// Реальный вызов ML
+	client := &http.Client{Timeout: time.Duration(s.Cfg.MLTimeoutSec) * time.Second}
+	url := s.Cfg.MLBaseURL + s.Cfg.MLAnalyzePath
+	reqBody := map[string]any{"id": id}
+	if len(preview) > 0 {
+		var p map[string]any
+		_ = json.Unmarshal(preview, &p)
+		reqBody["preview"] = p
 	}
-	s.Hub.Broadcast(scope, id, map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": payload}})
+	bodyBytes, _ := json.Marshal(reqBody)
+	resp, err := client.Post(url, "application/json", bytes.NewReader(bodyBytes))
+	if err != nil {
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+	defer resp.Body.Close()
+	var mlResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&mlResp); err != nil {
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+	s.Hub.Broadcast(scope, id, map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": mlResp}})
 }
 
-func (s *PipelineService) simulatePipeline(id string) {
+func (s *PipelineService) runPipeline(id string, req json.RawMessage) {
 	scope := "pipeline"
 	s.Hub.Broadcast(scope, id, map[string]any{"type": "queued", "data": map[string]any{"id": id, "scope": scope}})
-	time.Sleep(300 * time.Millisecond)
-	s.Hub.Broadcast(scope, id, map[string]any{"type": "started", "data": map[string]any{"id": id, "scope": scope}})
-	stages := []string{"extract", "transform", "load", "validate"}
-	for i, st := range stages {
-		p := (i + 1) * 25
-		msg := fmt.Sprintf("stage %s", st)
-		s.Hub.Broadcast(scope, id, map[string]any{"type": "progress", "data": map[string]any{"id": id, "scope": scope, "percent": p, "stage": st, "message": msg}})
-		s.Hub.Broadcast(scope, id, map[string]any{"type": "log", "data": map[string]any{"id": id, "scope": scope, "level": "info", "line": msg}})
-		time.Sleep(250 * time.Millisecond)
+	client := &http.Client{Timeout: time.Duration(s.Cfg.MLTimeoutSec) * time.Second}
+	url := s.Cfg.MLBaseURL + s.Cfg.MLPipelinePath
+	// Пробрасываем исходный запрос в ML, добавив id
+	var body map[string]any
+	if len(req) > 0 {
+		_ = json.Unmarshal(req, &body)
+	} else {
+		body = map[string]any{}
 	}
-	payload := map[string]any{
-		"status":  "success",
-		"message": "Pipeline completed",
-		"stats": map[string]any{
-			"rows_processed": 12345,
-			"duration_ms":    1000,
-		},
+	body["id"] = id
+	bodyBytes, _ := json.Marshal(body)
+	resp, err := client.Post(url, "application/json", bytes.NewReader(bodyBytes))
+	if err != nil {
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
 	}
-	s.Hub.Broadcast(scope, id, map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": payload}})
+	defer resp.Body.Close()
+	var mlResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&mlResp); err != nil {
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+	s.Hub.Broadcast(scope, id, map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": mlResp}})
 }

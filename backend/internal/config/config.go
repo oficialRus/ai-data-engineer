@@ -16,16 +16,22 @@ type LimitsConfig struct {
 }
 
 type AppConfig struct {
-	Server    ServerConfig
-	Limits    LimitsConfig
-	MLBaseURL string
+	Server         ServerConfig
+	Limits         LimitsConfig
+	MLBaseURL      string
+	MLAnalyzePath  string
+	MLPipelinePath string
+	MLTimeoutSec   int
 }
 
 func Load() AppConfig {
 	return AppConfig{
-		Server:    ServerConfig{Addr: getEnv("SERVER_ADDR", ":8081"), AllowedOrigins: parseCSV(getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://45.150.9.52:3000"))},
-		Limits:    LimitsConfig{MaxFileSizeBytes: parseSize(getEnv("MAX_FILE_SIZE", "10MB"))},
-		MLBaseURL: getEnv("ML_BASE_URL", "http://localhost:8000"),
+		Server:         ServerConfig{Addr: getEnv("SERVER_ADDR", ":8081"), AllowedOrigins: parseCSV(getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://45.150.9.52:3000"))},
+		Limits:         LimitsConfig{MaxFileSizeBytes: parseSize(getEnv("MAX_FILE_SIZE", "10MB"))},
+		MLBaseURL:      getEnv("ML_BASE_URL", "http://localhost:8000"),
+		MLAnalyzePath:  getEnv("ML_ANALYZE_PATH", "/analyze"),
+		MLPipelinePath: getEnv("ML_PIPELINE_PATH", "/pipelines"),
+		MLTimeoutSec:   int(parseSize(getEnv("ML_TIMEOUT_SEC", "30"))),
 	}
 }
 

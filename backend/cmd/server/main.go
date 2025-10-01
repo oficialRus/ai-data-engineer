@@ -31,8 +31,8 @@ func main() {
 	go hub.Run()
 
 	// Usecases
-	analyzeSvc := &usecase.AnalyzeService{Hub: hub}
-	pipelineSvc := &usecase.PipelineService{Hub: hub}
+	analyzeSvc := &usecase.AnalyzeService{Hub: hub, Cfg: cfg}
+	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg}
 	previewSvc := &usecase.PreviewService{}
 
 	// Interfaces

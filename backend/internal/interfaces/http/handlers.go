@@ -99,7 +99,9 @@ func (h *HTTPHandlers) Analyze(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.AnalyzeSvc.StartAnalyze(nil)
+	// Прокидываем preview в сервис анализа
+	previewRaw, _ := json.Marshal(req.Preview)
+	id, err := h.AnalyzeSvc.StartAnalyze(previewRaw)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Ошибка запуска анализа: "+err.Error())
 		return
@@ -121,7 +123,8 @@ func (h *HTTPHandlers) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.PipelineSvc.CreatePipeline(nil)
+	raw, _ := json.Marshal(req)
+	id, err := h.PipelineSvc.CreatePipeline(raw)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Ошибка создания пайплайна: "+err.Error())
 		return
