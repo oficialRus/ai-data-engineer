@@ -16,14 +16,16 @@ type LimitsConfig struct {
 }
 
 type AppConfig struct {
-	Server ServerConfig
-	Limits LimitsConfig
+	Server    ServerConfig
+	Limits    LimitsConfig
+	MLBaseURL string
 }
 
 func Load() AppConfig {
 	return AppConfig{
-		Server: ServerConfig{Addr: getEnv("SERVER_ADDR", ":8000"), AllowedOrigins: parseCSV(getEnv("ALLOWED_ORIGINS", "http://localhost:3001,http://45.150.9.52:3001"))},
-		Limits: LimitsConfig{MaxFileSizeBytes: parseSize(getEnv("MAX_FILE_SIZE", "10MB"))},
+		Server:    ServerConfig{Addr: getEnv("SERVER_ADDR", ":8081"), AllowedOrigins: parseCSV(getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://45.150.9.52:3000"))},
+		Limits:    LimitsConfig{MaxFileSizeBytes: parseSize(getEnv("MAX_FILE_SIZE", "10MB"))},
+		MLBaseURL: getEnv("ML_BASE_URL", "http://localhost:8000"),
 	}
 }
 
