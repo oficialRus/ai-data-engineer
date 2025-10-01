@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -61,13 +62,21 @@ func corsMiddleware(allowedOrigins []string) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" && isAllowedOrigin(origin, allowedOrigins) {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With")
-				w.Header().Set("Access-Control-Max-Age", "600")
+			if origin != "" {
+				allowed, allowAny := isAllowedOrigin(origin, allowedOrigins)
+				if allowAny {
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+					w.Header().Del("Access-Control-Allow-Credentials")
+				} else if allowed {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+				if allowed || allowAny {
+					w.Header().Set("Vary", "Origin")
+					w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+					w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With")
+					w.Header().Set("Access-Control-Max-Age", "600")
+				}
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -78,11 +87,16 @@ func corsMiddleware(allowedOrigins []string) mux.MiddlewareFunc {
 	}
 }
 
-func isAllowedOrigin(origin string, allowed []string) bool {
+func isAllowedOrigin(origin string, allowed []string) (bool, bool) {
+	// allowAny=true when ALLOWED_ORIGINS contains "*"
+	normalized := strings.TrimRight(origin, "/")
 	for _, o := range allowed {
-		if o == origin {
-			return true
+		if o == "*" {
+			return true, true
+		}
+		if strings.TrimRight(o, "/") == normalized {
+			return true, false
 		}
 	}
-	return false
+	return false, false
 }
