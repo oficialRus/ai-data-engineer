@@ -126,7 +126,9 @@ func (h *HTTPHandlers) CreatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Ошибка создания пайплайна: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(domain.CreatePipelineResponse{ID: id})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

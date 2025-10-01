@@ -7,7 +7,8 @@ import (
 )
 
 type ServerConfig struct {
-	Addr string
+	Addr           string
+	AllowedOrigins []string
 }
 
 type LimitsConfig struct {
@@ -21,7 +22,7 @@ type AppConfig struct {
 
 func Load() AppConfig {
 	return AppConfig{
-		Server: ServerConfig{Addr: getEnv("SERVER_ADDR", ":8081")},
+		Server: ServerConfig{Addr: getEnv("SERVER_ADDR", ":8000"), AllowedOrigins: parseCSV(getEnv("ALLOWED_ORIGINS", "http://localhost:3001,http://45.150.9.52:3001"))},
 		Limits: LimitsConfig{MaxFileSizeBytes: parseSize(getEnv("MAX_FILE_SIZE", "10MB"))},
 	}
 }
@@ -53,4 +54,20 @@ func parseSize(s string) int64 {
 		return 10 * 1024 * 1024
 	}
 	return n
+}
+
+func parseCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
