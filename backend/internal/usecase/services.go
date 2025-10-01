@@ -2,10 +2,12 @@ package usecase
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"time"
 
@@ -57,20 +59,47 @@ func (s *AnalyzeService) runAnalyze(id string, preview json.RawMessage) {
 		s.Hub.Broadcast(scope, id, map[string]any{"type": "log", "data": map[string]any{"id": id, "scope": scope, "level": "info", "line": msg}})
 		time.Sleep(200 * time.Millisecond)
 	}
-	// Реальный вызов ML с отладкой
+	// Реальный вызов ML: формируем multipart/form-data с файлом CSV из preview
 	client := &http.Client{Timeout: time.Duration(s.Cfg.MLTimeoutSec) * time.Second}
 	url := s.Cfg.MLBaseURL + s.Cfg.MLAnalyzePath
-	reqBody := map[string]any{"id": id}
-	if len(preview) > 0 {
-		var p map[string]any
-		_ = json.Unmarshal(preview, &p)
-		reqBody["preview"] = p
-	}
-	bodyBytes, _ := json.Marshal(reqBody)
-	log.Printf("[ANALYZE] Request to ML: %s", url)
-	log.Printf("[ANALYZE] Request body: %s", string(bodyBytes))
 
-	resp, err := client.Post(url, "application/json", bytes.NewReader(bodyBytes))
+	csvBytes, headers, rowsCount, err := buildCSVFromPreview(preview)
+	if err != nil {
+		log.Printf("[ANALYZE] Failed to build CSV from preview: %v", err)
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	// Добавляем файл
+	filePart, err := writer.CreateFormFile("file", "preview.csv")
+	if err != nil {
+		log.Printf("[ANALYZE] Failed to create form file: %v", err)
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+	if _, err := filePart.Write(csvBytes); err != nil {
+		log.Printf("[ANALYZE] Failed to write CSV to form file: %v", err)
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+	// Дополнительные поля для ML
+	_ = writer.WriteField("fileType", "csv")
+	_ = writer.WriteField("id", id)
+	// Для отладки можно передать метаданные
+	_ = writer.WriteField("columns", fmt.Sprintf("%v", headers))
+	_ = writer.WriteField("rowCount", fmt.Sprintf("%d", rowsCount))
+	if err := writer.Close(); err != nil {
+		log.Printf("[ANALYZE] Failed to close multipart writer: %v", err)
+		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
+		return
+	}
+
+	contentType := writer.FormDataContentType()
+	log.Printf("[ANALYZE] Request to ML (multipart): %s, csvBytes=%d, headers=%d, rows=%d", url, len(csvBytes), len(headers), rowsCount)
+
+	resp, err := client.Post(url, contentType, bytes.NewReader(body.Bytes()))
 	if err != nil {
 		log.Printf("[ANALYZE] ML request failed: %v", err)
 		s.Hub.Broadcast(scope, id, map[string]any{"type": "error", "data": map[string]any{"id": id, "scope": scope, "reason": err.Error()}})
@@ -100,6 +129,58 @@ func (s *AnalyzeService) runAnalyze(id string, preview json.RawMessage) {
 	}
 	log.Printf("[ANALYZE] Parsed ML response: %+v", mlResp)
 	s.Hub.Broadcast(scope, id, map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": mlResp}})
+}
+
+// buildCSVFromPreview строит CSV в памяти из JSON preview.
+// Ожидается структура: { "columns": [{"name":"..."}, ...], "rows": [ {col: val, ...}, ... ] }
+func buildCSVFromPreview(preview json.RawMessage) ([]byte, []string, int, error) {
+	type column struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	type previewPayload struct {
+		Columns []column         `json:"columns"`
+		Rows    []map[string]any `json:"rows"`
+	}
+
+	var p previewPayload
+	if err := json.Unmarshal(preview, &p); err != nil {
+		return nil, nil, 0, fmt.Errorf("invalid preview: %w", err)
+	}
+	if len(p.Columns) == 0 {
+		return nil, nil, 0, fmt.Errorf("preview has no columns")
+	}
+
+	headers := make([]string, len(p.Columns))
+	for i, c := range p.Columns {
+		headers[i] = c.Name
+	}
+
+	buf := &bytes.Buffer{}
+	w := csv.NewWriter(buf)
+	if err := w.Write(headers); err != nil {
+		return nil, nil, 0, fmt.Errorf("failed to write headers: %w", err)
+	}
+	rowsWritten := 0
+	for _, row := range p.Rows {
+		rec := make([]string, len(headers))
+		for i, h := range headers {
+			if v, ok := row[h]; ok && v != nil {
+				rec[i] = fmt.Sprint(v)
+			} else {
+				rec[i] = ""
+			}
+		}
+		if err := w.Write(rec); err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to write row: %w", err)
+		}
+		rowsWritten++
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, nil, 0, fmt.Errorf("csv writer error: %w", err)
+	}
+	return buf.Bytes(), headers, rowsWritten, nil
 }
 
 func (s *PipelineService) runPipeline(id string, req json.RawMessage) {
