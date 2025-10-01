@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"encoding/csv"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"io"
+	"io/ioutil"
 	"mime/multipart"
 	"strings"
 )
@@ -29,6 +31,8 @@ func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) 
 		return previewCSV(f)
 	case "json":
 		return previewJSON(f)
+	case "xml":
+		return previewXML(f)
 	default:
 		return PreviewResult{}, errors.New("unsupported file type")
 	}
@@ -40,8 +44,14 @@ func (s *PreviewService) FromPG(params map[string]any) (PreviewResult, error) {
 }
 
 func previewCSV(r io.Reader) (PreviewResult, error) {
-	cr := csv.NewReader(r)
+	br := bufio.NewReader(r)
+	// Peek первую строку для автоопределения разделителя
+	line, _ := br.Peek(4096)
+	sep := detectCSVSeparator(string(line))
+
+	cr := csv.NewReader(br)
 	cr.FieldsPerRecord = -1
+	cr.Comma = sep
 	head, err := cr.Read()
 	if err != nil {
 		return PreviewResult{}, err
@@ -72,57 +82,202 @@ func previewCSV(r io.Reader) (PreviewResult, error) {
 	return PreviewResult{Columns: cols, Rows: rows, RowCount: len(rows)}, nil
 }
 
+func detectCSVSeparator(sample string) rune {
+	// смотрим до первой новой строки
+	if idx := strings.IndexByte(sample, '\n'); idx >= 0 {
+		sample = sample[:idx]
+	}
+	candidates := []rune{',', ';', '\t', '|'}
+	best := ','
+	bestCount := -1
+	for _, c := range candidates {
+		cnt := strings.Count(sample, string(c))
+		if cnt > bestCount {
+			bestCount = cnt
+			best = c
+		}
+	}
+	return best
+}
+
 func previewJSON(r io.Reader) (PreviewResult, error) {
-	// Expect NDJSON or array
-	dec := json.NewDecoder(bufio.NewReader(r))
-	rows := make([]map[string]any, 0, 100)
-	// Try array first
-	t, err := dec.Token()
+	// Поддержка: массив объектов, одиночный объект, объект с массивом внутри, NDJSON
+	// Читаем всё (для предпросмотра это приемлемо)
+	data, err := ioutil.ReadAll(bufio.NewReader(r))
 	if err != nil {
 		return PreviewResult{}, err
 	}
-	if d, ok := t.(json.Delim); ok && d.String() == "[" {
-		for dec.More() && len(rows) < 100 {
-			var m map[string]any
-			if err := dec.Decode(&m); err != nil {
-				return PreviewResult{}, err
-			}
-			rows = append(rows, m)
-		}
-		// consume ]
-		_, _ = dec.Token()
-	} else {
-		// token belongs to first value; treat as single object stream
-		var first map[string]any
-		switch v := t.(type) {
-		case json.Delim:
-			return PreviewResult{}, errors.New("unsupported json structure")
-		case string, float64, bool, nil:
-			return PreviewResult{}, errors.New("expected object(s)")
-		default:
-			_ = v
-		}
-		if err := dec.Decode(&first); err != nil {
+
+	trim := strings.TrimSpace(string(data))
+	rows := make([]map[string]any, 0, 100)
+
+	// 1) Корневой массив
+	if strings.HasPrefix(trim, "[") {
+		var arr []map[string]any
+		if err := json.Unmarshal(data, &arr); err != nil {
 			return PreviewResult{}, err
 		}
-		rows = append(rows, first)
-		for len(rows) < 100 {
-			var m map[string]any
-			if err := dec.Decode(&m); err != nil {
+		for i := 0; i < len(arr) && len(rows) < 100; i++ {
+			rows = append(rows, arr[i])
+		}
+		return buildJSONPreview(rows), nil
+	}
+
+	// 2) Корневой объект
+	if strings.HasPrefix(trim, "{") {
+		var obj map[string]any
+		if err := json.Unmarshal(data, &obj); err != nil {
+			return PreviewResult{}, err
+		}
+		// Попробуем найти первое поле-массив объектов
+		for _, v := range obj {
+			if arr, ok := v.([]any); ok {
+				for _, it := range arr {
+					if m, ok := it.(map[string]any); ok {
+						rows = append(rows, m)
+						if len(rows) >= 100 {
+							break
+						}
+					}
+				}
+				if len(rows) > 0 {
+					return buildJSONPreview(rows), nil
+				}
+			}
+		}
+		// Иначе трактуем сам объект как строку предпросмотра
+		rows = append(rows, obj)
+		return buildJSONPreview(rows), nil
+	}
+
+	// 3) NDJSON: каждая строка — объект
+	scanner := bufio.NewScanner(strings.NewReader(trim))
+	for scanner.Scan() {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(scanner.Text()), &m); err == nil {
+			rows = append(rows, m)
+			if len(rows) >= 100 {
 				break
 			}
-			rows = append(rows, m)
 		}
 	}
-	colsMap := map[string]struct{}{}
+	if len(rows) == 0 {
+		return PreviewResult{}, errors.New("unsupported json structure")
+	}
+	return buildJSONPreview(rows), nil
+}
+
+func buildJSONPreview(rows []map[string]any) PreviewResult {
+	colsMap := map[string]string{}
 	for _, r := range rows {
-		for k := range r {
-			colsMap[k] = struct{}{}
+		for k, v := range r {
+			if _, ok := colsMap[k]; !ok {
+				colsMap[k] = inferJSONType(v)
+			}
 		}
 	}
 	cols := make([]struct{ Name, Type string }, 0, len(colsMap))
-	for k := range colsMap {
-		cols = append(cols, struct{ Name, Type string }{Name: k, Type: "any"})
+	for k, t := range colsMap {
+		cols = append(cols, struct{ Name, Type string }{Name: k, Type: t})
 	}
-	return PreviewResult{Columns: cols, Rows: rows, RowCount: len(rows)}, nil
+	return PreviewResult{Columns: cols, Rows: rows, RowCount: len(rows)}
+}
+
+func inferJSONType(v any) string {
+	switch v.(type) {
+	case string:
+		// Простой хинт: ISO8601 часто содержит '-' и ':'
+		s := v.(string)
+		if len(s) >= 19 && strings.Count(s, "-") >= 2 && strings.Count(s, ":") >= 2 {
+			return "datetime"
+		}
+		return "string"
+	case float64:
+		return "number"
+	case bool:
+		return "bool"
+	case nil:
+		return "string"
+	default:
+		return "string"
+	}
+}
+
+// previewXML поддерживает простой плоский формат: <root><row><a>1</a><b>2</b></row>...</root>
+// Ищет первый повторяющийся узел под корнем и извлекает его дочерние элементы как колонки
+func previewXML(r io.Reader) (PreviewResult, error) {
+	dec := xml.NewDecoder(bufio.NewReader(r))
+	type element struct {
+		name  string
+		depth int
+	}
+	depth := 0
+	rootOpened := false
+	var rowName string
+	rows := make([]map[string]any, 0, 100)
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return PreviewResult{}, err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			depth++
+			if !rootOpened {
+				rootOpened = true
+				continue
+			}
+			if depth == 2 { // прямые дети корня
+				if rowName == "" {
+					rowName = t.Name.Local
+				}
+				if t.Name.Local == rowName {
+					// читаем плоские поля
+					row := map[string]any{}
+					// consume children until EndElement for row
+					for {
+						tok2, err2 := dec.Token()
+						if err2 != nil {
+							if err2 == io.EOF {
+								break
+							}
+							return PreviewResult{}, err2
+						}
+						switch tt := tok2.(type) {
+						case xml.StartElement:
+							// читаем текстовое содержимое
+							var text string
+							if err := dec.DecodeElement(&text, &tt); err == nil {
+								row[tt.Name.Local] = text
+							}
+						case xml.EndElement:
+							if tt.Name.Local == rowName {
+								rows = append(rows, row)
+								goto nextToken
+							}
+						}
+					}
+				}
+			}
+		case xml.EndElement:
+			if rootOpened && depth == 1 {
+				// конец корня
+				break
+			}
+			if depth > 0 {
+				depth--
+			}
+		}
+	nextToken:
+		if len(rows) >= 100 {
+			break
+		}
+	}
+	if len(rows) == 0 {
+		return PreviewResult{}, errors.New("unsupported xml structure")
+	}
+	return buildJSONPreview(rows), nil
 }
