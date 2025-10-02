@@ -2,6 +2,7 @@ package wsiface
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -32,19 +33,35 @@ type resumePayload struct {
 }
 
 func (h *WSHandlers) HandleWS(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[WS_HANDLER] HandleWS called from %s", r.RemoteAddr)
+
 	h.Hub.HandleWS(w, r, func(cmdType string, data json.RawMessage, conn *websocket.Conn) {
+		log.Printf("[WS_HANDLER] Processing command: %s", cmdType)
+
 		switch cmdType {
 		case "subscribe":
 			var p subscribePayload
-			if err := json.Unmarshal(data, &p); err == nil {
-				h.Hub.Subscribe(p.Topic, p.ID, conn)
+			if err := json.Unmarshal(data, &p); err != nil {
+				log.Printf("[WS_HANDLER] ERROR: Failed to unmarshal subscribe payload: %v", err)
+				_ = conn.WriteJSON(map[string]any{"type": "error", "data": map[string]any{"reason": "invalid subscribe payload"}})
+				return
 			}
+			log.Printf("[WS_HANDLER] Subscribing to topic: %s, id: %s", p.Topic, p.ID)
+			h.Hub.Subscribe(p.Topic, p.ID, conn)
+			_ = conn.WriteJSON(map[string]any{"type": "subscribed", "data": map[string]any{"topic": p.Topic, "id": p.ID}})
+
 		case "resume":
 			var p resumePayload
-			if err := json.Unmarshal(data, &p); err == nil {
-				_ = conn.WriteJSON(map[string]any{"type": "resumed", "data": map[string]any{"pipelineId": p.PipelineID}})
+			if err := json.Unmarshal(data, &p); err != nil {
+				log.Printf("[WS_HANDLER] ERROR: Failed to unmarshal resume payload: %v", err)
+				_ = conn.WriteJSON(map[string]any{"type": "error", "data": map[string]any{"reason": "invalid resume payload"}})
+				return
 			}
+			log.Printf("[WS_HANDLER] Resuming pipeline: %s", p.PipelineID)
+			_ = conn.WriteJSON(map[string]any{"type": "resumed", "data": map[string]any{"pipelineId": p.PipelineID}})
+
 		default:
+			log.Printf("[WS_HANDLER] ERROR: Unknown command type: %s", cmdType)
 			_ = conn.WriteJSON(map[string]any{"type": "error", "data": map[string]any{"reason": "unknown command"}})
 		}
 	})

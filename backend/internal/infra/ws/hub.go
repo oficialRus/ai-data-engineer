@@ -2,6 +2,7 @@ package ws
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -70,19 +71,34 @@ func Key(topic, id string) SubscriptionKey { return SubscriptionKey(topic + ":" 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request, onCommand func(cmdType string, data json.RawMessage, conn *websocket.Conn)) {
+	log.Printf("[WEBSOCKET] Attempting to upgrade connection from %s", r.RemoteAddr)
+	log.Printf("[WEBSOCKET] Headers - Upgrade: %s, Connection: %s", r.Header.Get("Upgrade"), r.Header.Get("Connection"))
+	log.Printf("[WEBSOCKET] Sec-WebSocket-Key: %s", r.Header.Get("Sec-WebSocket-Key"))
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		log.Printf("[WEBSOCKET] ERROR: Failed to upgrade connection: %v", err)
+		http.Error(w, "Failed to upgrade to WebSocket", http.StatusBadRequest)
 		return
 	}
-	defer conn.Close()
+
+	log.Printf("[WEBSOCKET] Connection upgraded successfully from %s", r.RemoteAddr)
+	defer func() {
+		log.Printf("[WEBSOCKET] Closing connection from %s", r.RemoteAddr)
+		conn.Close()
+	}()
+
 	for {
 		var cmd struct {
 			Type string          `json:"type"`
 			Data json.RawMessage `json:"data"`
 		}
 		if err := conn.ReadJSON(&cmd); err != nil {
+			log.Printf("[WEBSOCKET] Connection closed or error reading JSON from %s: %v", r.RemoteAddr, err)
 			return
 		}
+
+		log.Printf("[WEBSOCKET] Received command from %s: type=%s, data_size=%d", r.RemoteAddr, cmd.Type, len(cmd.Data))
 		onCommand(cmd.Type, cmd.Data, conn)
 	}
 }

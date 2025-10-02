@@ -109,17 +109,32 @@ func loggingMiddleware() mux.MiddlewareFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
+			// Check if this is a WebSocket upgrade request
+			isWebSocket := r.Header.Get("Upgrade") == "websocket"
+
 			// Log incoming request
-			log.Printf("[SERVER] [%s] %s %s from %s",
+			log.Printf("[SERVER] [%s] %s %s from %s%s",
 				start.Format("15:04:05.000"),
 				r.Method,
 				r.URL.Path,
-				r.RemoteAddr)
+				r.RemoteAddr,
+				func() string {
+					if isWebSocket {
+						return " (WebSocket)"
+					}
+					return ""
+				}())
 
-			// Log headers
-			log.Printf("[SERVER] User-Agent: %s", r.Header.Get("User-Agent"))
-			log.Printf("[SERVER] Content-Type: %s", r.Header.Get("Content-Type"))
-			log.Printf("[SERVER] Content-Length: %s", r.Header.Get("Content-Length"))
+			// Log headers for non-WebSocket requests
+			if !isWebSocket {
+				log.Printf("[SERVER] User-Agent: %s", r.Header.Get("User-Agent"))
+				log.Printf("[SERVER] Content-Type: %s", r.Header.Get("Content-Type"))
+				log.Printf("[SERVER] Content-Length: %s", r.Header.Get("Content-Length"))
+			} else {
+				log.Printf("[SERVER] WebSocket headers - Connection: %s, Sec-WebSocket-Key: %s",
+					r.Header.Get("Connection"),
+					r.Header.Get("Sec-WebSocket-Key"))
+			}
 
 			// Create a response writer wrapper to capture status code
 			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
@@ -127,14 +142,22 @@ func loggingMiddleware() mux.MiddlewareFunc {
 			// Process request
 			next.ServeHTTP(wrapped, r)
 
-			// Log response
+			// Log response (WebSocket connections might not have meaningful status codes after upgrade)
 			duration := time.Since(start)
-			log.Printf("[SERVER] [%s] %s %s -> %d (%v)",
-				time.Now().Format("15:04:05.000"),
-				r.Method,
-				r.URL.Path,
-				wrapped.statusCode,
-				duration)
+			if !isWebSocket || wrapped.statusCode != http.StatusSwitchingProtocols {
+				log.Printf("[SERVER] [%s] %s %s -> %d (%v)",
+					time.Now().Format("15:04:05.000"),
+					r.Method,
+					r.URL.Path,
+					wrapped.statusCode,
+					duration)
+			} else {
+				log.Printf("[SERVER] [%s] %s %s -> WebSocket upgraded (%v)",
+					time.Now().Format("15:04:05.000"),
+					r.Method,
+					r.URL.Path,
+					duration)
+			}
 		})
 	}
 }
