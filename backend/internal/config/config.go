@@ -16,6 +16,21 @@ type LimitsConfig struct {
 	MaxFileSizeBytes int64
 }
 
+type DatabaseConfig struct {
+	PostgreSQLDataDSN string
+	ClickHouseURL     string
+	ClickHouseUser    string
+	ClickHousePass    string
+	ClickHouseDB      string
+}
+
+type AirflowConfig struct {
+	BaseURL  string
+	Username string
+	Password string
+	Timeout  int
+}
+
 type AppConfig struct {
 	Server         ServerConfig
 	Limits         LimitsConfig
@@ -23,6 +38,8 @@ type AppConfig struct {
 	MLAnalyzePath  string
 	MLPipelinePath string
 	MLTimeoutSec   int
+	Database       DatabaseConfig
+	Airflow        AirflowConfig
 }
 
 func Load() AppConfig {
@@ -35,6 +52,19 @@ func Load() AppConfig {
 		MLAnalyzePath:  getEnv("ML_ANALYZE_PATH", "/analyze"),
 		MLPipelinePath: getEnv("ML_PIPELINE_PATH", "/pipelines"),
 		MLTimeoutSec:   int(parseSize(getEnv("ML_TIMEOUT_SEC", "30"))),
+		Database: DatabaseConfig{
+			PostgreSQLDataDSN: getEnv("POSTGRESQL_DATA_DSN", "postgres://datauser:datapass@localhost:5433/datawarehouse?sslmode=disable"),
+			ClickHouseURL:     getEnv("CLICKHOUSE_URL", "http://localhost:8123"),
+			ClickHouseUser:    getEnv("CLICKHOUSE_USER", "clickuser"),
+			ClickHousePass:    getEnv("CLICKHOUSE_PASS", "clickpass"),
+			ClickHouseDB:      getEnv("CLICKHOUSE_DB", "analytics"),
+		},
+		Airflow: AirflowConfig{
+			BaseURL:  getEnv("AIRFLOW_BASE_URL", "http://localhost:8080"),
+			Username: getEnv("AIRFLOW_USERNAME", "airflow"),
+			Password: getEnv("AIRFLOW_PASSWORD", "airflow"),
+			Timeout:  int(parseSize(getEnv("AIRFLOW_TIMEOUT_SEC", "30"))),
+		},
 	}
 
 	log.Printf("[CONFIG] Server address: %s", cfg.Server.Addr)
@@ -44,6 +74,11 @@ func Load() AppConfig {
 	log.Printf("[CONFIG] ML analyze path: %s", cfg.MLAnalyzePath)
 	log.Printf("[CONFIG] ML pipeline path: %s", cfg.MLPipelinePath)
 	log.Printf("[CONFIG] ML timeout: %d seconds", cfg.MLTimeoutSec)
+	log.Printf("[CONFIG] PostgreSQL Data DSN: %s", maskSensitiveInfo(cfg.Database.PostgreSQLDataDSN))
+	log.Printf("[CONFIG] ClickHouse URL: %s", cfg.Database.ClickHouseURL)
+	log.Printf("[CONFIG] ClickHouse DB: %s", cfg.Database.ClickHouseDB)
+	log.Printf("[CONFIG] Airflow URL: %s", cfg.Airflow.BaseURL)
+	log.Printf("[CONFIG] Airflow timeout: %d seconds", cfg.Airflow.Timeout)
 	log.Printf("[CONFIG] Configuration loaded successfully")
 
 	return cfg
@@ -105,4 +140,16 @@ func parseCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// maskSensitiveInfo маскирует чувствительную информацию в логах
+func maskSensitiveInfo(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	// Простая маскировка - показываем только первые и последние символы
+	if len(dsn) <= 8 {
+		return "***"
+	}
+	return dsn[:4] + "***" + dsn[len(dsn)-4:]
 }

@@ -27,6 +27,7 @@ type PipelineService struct {
 	Hub          *infra.Hub
 	Cfg          config.AppConfig
 	DAGGenerator *DAGGeneratorService
+	AirflowSvc   *AirflowService
 }
 
 func (s *AnalyzeService) StartAnalyze(preview json.RawMessage) (string, error) {

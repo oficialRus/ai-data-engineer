@@ -20,6 +20,8 @@ type HTTPHandlers struct {
 	AnalyzeSvc  *usecase.AnalyzeService
 	PipelineSvc *usecase.PipelineService
 	PreviewSvc  *usecase.PreviewService
+	AirflowSvc  *usecase.AirflowService
+	DatabaseSvc *usecase.DatabaseService
 	Cfg         config.AppConfig
 }
 
@@ -418,4 +420,244 @@ func validateSource(sourceType string, raw json.RawMessage) error {
 func isUserInputError(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "unsupported") || strings.Contains(s, "expected") || strings.Contains(s, "Некоррект")
+}
+
+// GetPipelines возвращает список всех пайплайнов из Airflow
+func (h *HTTPHandlers) GetPipelines(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := fmt.Sprintf("get-pipelines-%d", start.UnixNano())
+	log.Printf("[%s] [GET_PIPELINES] Starting request from %s", requestID, r.RemoteAddr)
+
+	defer func() {
+		duration := time.Since(start)
+		log.Printf("[%s] [GET_PIPELINES] Request completed in %v", requestID, duration)
+	}()
+
+	log.Printf("[%s] [GET_PIPELINES] Fetching DAGs from Airflow", requestID)
+	dags, err := h.AirflowSvc.GetDAGs()
+	if err != nil {
+		log.Printf("[%s] [GET_PIPELINES] ERROR: Failed to get DAGs: %v", requestID, err)
+		writeErrorWithRequestID(w, http.StatusInternalServerError, "Ошибка получения пайплайнов: "+err.Error(), requestID)
+		return
+	}
+
+	// Фильтруем только наши сгенерированные DAG (начинающиеся с "pipe_")
+	var pipelines []map[string]interface{}
+	for _, dag := range dags {
+		if strings.HasPrefix(dag.DagID, "pipe_") {
+			log.Printf("[%s] [GET_PIPELINES] Found pipeline DAG: %s", requestID, dag.DagID)
+
+			// Получаем информацию о последних запусках
+			runs, err := h.AirflowSvc.GetDAGRuns(dag.DagID)
+			if err != nil {
+				log.Printf("[%s] [GET_PIPELINES] WARNING: Failed to get runs for %s: %v", requestID, dag.DagID, err)
+				runs = []usecase.AirflowDAGRun{} // Пустой массив если не удалось получить
+			}
+
+			var lastRun *usecase.AirflowDAGRun
+			if len(runs) > 0 {
+				lastRun = &runs[0] // Первый элемент - последний запуск
+			}
+
+			pipeline := map[string]interface{}{
+				"id":          dag.DagID,
+				"name":        dag.DagID,
+				"description": dag.Description,
+				"is_paused":   dag.IsPaused,
+				"is_active":   dag.IsActive,
+				"last_parsed": dag.LastParsed,
+				"file_loc":    dag.FileLoc,
+				"runs_count":  len(runs),
+			}
+
+			if lastRun != nil {
+				pipeline["last_run"] = map[string]interface{}{
+					"dag_run_id":       lastRun.DagRunID,
+					"state":            lastRun.State,
+					"execution_date":   lastRun.ExecutionDate,
+					"start_date":       lastRun.StartDate,
+					"end_date":         lastRun.EndDate,
+					"external_trigger": lastRun.ExternalTrigger,
+				}
+			}
+
+			pipelines = append(pipelines, pipeline)
+		}
+	}
+
+	log.Printf("[%s] [GET_PIPELINES] SUCCESS: Found %d pipelines", requestID, len(pipelines))
+	writeJSONWithRequestID(w, http.StatusOK, map[string]interface{}{
+		"pipelines": pipelines,
+		"total":     len(pipelines),
+	}, requestID)
+}
+
+// GetPipeline возвращает информацию о конкретном пайплайне
+func (h *HTTPHandlers) GetPipeline(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := fmt.Sprintf("get-pipeline-%d", start.UnixNano())
+
+	// Извлекаем ID пайплайна из URL
+	pipelineID := r.URL.Query().Get("id")
+	if pipelineID == "" {
+		writeErrorWithRequestID(w, http.StatusBadRequest, "Параметр 'id' обязателен", requestID)
+		return
+	}
+
+	log.Printf("[%s] [GET_PIPELINE] Starting request for pipeline: %s", requestID, pipelineID)
+
+	defer func() {
+		duration := time.Since(start)
+		log.Printf("[%s] [GET_PIPELINE] Request completed in %v", requestID, duration)
+	}()
+
+	// Получаем информацию о DAG
+	log.Printf("[%s] [GET_PIPELINE] Fetching DAG info from Airflow", requestID)
+	dag, err := h.AirflowSvc.GetDAG(pipelineID)
+	if err != nil {
+		log.Printf("[%s] [GET_PIPELINE] ERROR: Failed to get DAG: %v", requestID, err)
+		status := http.StatusNotFound
+		if !strings.Contains(err.Error(), "not found") {
+			status = http.StatusInternalServerError
+		}
+		writeErrorWithRequestID(w, status, "Ошибка получения пайплайна: "+err.Error(), requestID)
+		return
+	}
+
+	// Получаем историю запусков
+	log.Printf("[%s] [GET_PIPELINE] Fetching DAG runs", requestID)
+	runs, err := h.AirflowSvc.GetDAGRuns(pipelineID)
+	if err != nil {
+		log.Printf("[%s] [GET_PIPELINE] WARNING: Failed to get runs: %v", requestID, err)
+		runs = []usecase.AirflowDAGRun{} // Пустой массив если не удалось получить
+	}
+
+	pipeline := map[string]interface{}{
+		"id":          dag.DagID,
+		"name":        dag.DagID,
+		"description": dag.Description,
+		"is_paused":   dag.IsPaused,
+		"is_active":   dag.IsActive,
+		"last_parsed": dag.LastParsed,
+		"file_loc":    dag.FileLoc,
+		"runs":        runs,
+		"runs_count":  len(runs),
+	}
+
+	log.Printf("[%s] [GET_PIPELINE] SUCCESS: Retrieved pipeline %s with %d runs", requestID, pipelineID, len(runs))
+	writeJSONWithRequestID(w, http.StatusOK, pipeline, requestID)
+}
+
+// TriggerPipeline запускает выполнение пайплайна
+func (h *HTTPHandlers) TriggerPipeline(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := fmt.Sprintf("trigger-pipeline-%d", start.UnixNano())
+	log.Printf("[%s] [TRIGGER_PIPELINE] Starting request from %s", requestID, r.RemoteAddr)
+
+	defer func() {
+		duration := time.Since(start)
+		log.Printf("[%s] [TRIGGER_PIPELINE] Request completed in %v", requestID, duration)
+	}()
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	defer r.Body.Close()
+
+	var req struct {
+		PipelineID string                 `json:"pipeline_id"`
+		Config     map[string]interface{} `json:"config,omitempty"`
+	}
+
+	log.Printf("[%s] [TRIGGER_PIPELINE] Decoding request", requestID)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		log.Printf("[%s] [TRIGGER_PIPELINE] ERROR: Failed to decode request: %v", requestID, err)
+		writeErrorWithRequestID(w, http.StatusBadRequest, "Некорректные данные запроса: "+err.Error(), requestID)
+		return
+	}
+
+	if req.PipelineID == "" {
+		log.Printf("[%s] [TRIGGER_PIPELINE] ERROR: Missing pipeline_id", requestID)
+		writeErrorWithRequestID(w, http.StatusBadRequest, "Параметр 'pipeline_id' обязателен", requestID)
+		return
+	}
+
+	log.Printf("[%s] [TRIGGER_PIPELINE] Triggering pipeline: %s", requestID, req.PipelineID)
+	dagRun, err := h.AirflowSvc.TriggerDAG(req.PipelineID, req.Config)
+	if err != nil {
+		log.Printf("[%s] [TRIGGER_PIPELINE] ERROR: Failed to trigger DAG: %v", requestID, err)
+		writeErrorWithRequestID(w, http.StatusInternalServerError, "Ошибка запуска пайплайна: "+err.Error(), requestID)
+		return
+	}
+
+	log.Printf("[%s] [TRIGGER_PIPELINE] SUCCESS: Pipeline triggered, run ID: %s", requestID, dagRun.DagRunID)
+	writeJSONWithRequestID(w, http.StatusOK, map[string]interface{}{
+		"message":     "Пайплайн успешно запущен",
+		"pipeline_id": req.PipelineID,
+		"run_id":      dagRun.DagRunID,
+		"state":       dagRun.State,
+	}, requestID)
+}
+
+// GetDatabaseStatus возвращает статус подключений к базам данных
+func (h *HTTPHandlers) GetDatabaseStatus(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := fmt.Sprintf("db-status-%d", start.UnixNano())
+	log.Printf("[%s] [DB_STATUS] Starting request from %s", requestID, r.RemoteAddr)
+
+	defer func() {
+		duration := time.Since(start)
+		log.Printf("[%s] [DB_STATUS] Request completed in %v", requestID, duration)
+	}()
+
+	log.Printf("[%s] [DB_STATUS] Testing database connections", requestID)
+	connections := h.DatabaseSvc.TestConnections()
+
+	// Получаем информацию о таблицах PostgreSQL если подключение работает
+	var tables []usecase.TableInfo
+	for _, conn := range connections {
+		if conn.Type == "postgresql" && conn.Connected {
+			log.Printf("[%s] [DB_STATUS] Getting PostgreSQL tables", requestID)
+			pgTables, err := h.DatabaseSvc.GetPostgreSQLTables()
+			if err != nil {
+				log.Printf("[%s] [DB_STATUS] WARNING: Failed to get PostgreSQL tables: %v", requestID, err)
+			} else {
+				tables = pgTables
+				log.Printf("[%s] [DB_STATUS] Found %d PostgreSQL tables", requestID, len(tables))
+			}
+			break
+		}
+	}
+
+	log.Printf("[%s] [DB_STATUS] SUCCESS: Database status retrieved", requestID)
+	writeJSONWithRequestID(w, http.StatusOK, map[string]interface{}{
+		"connections": connections,
+		"tables":      tables,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	}, requestID)
+}
+
+// InitializeSampleData создает образцы данных в базах
+func (h *HTTPHandlers) InitializeSampleData(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	requestID := fmt.Sprintf("init-data-%d", start.UnixNano())
+	log.Printf("[%s] [INIT_DATA] Starting request from %s", requestID, r.RemoteAddr)
+
+	defer func() {
+		duration := time.Since(start)
+		log.Printf("[%s] [INIT_DATA] Request completed in %v", requestID, duration)
+	}()
+
+	log.Printf("[%s] [INIT_DATA] Creating sample data", requestID)
+	if err := h.DatabaseSvc.CreateSampleData(); err != nil {
+		log.Printf("[%s] [INIT_DATA] ERROR: Failed to create sample data: %v", requestID, err)
+		writeErrorWithRequestID(w, http.StatusInternalServerError, "Ошибка создания образцов данных: "+err.Error(), requestID)
+		return
+	}
+
+	log.Printf("[%s] [INIT_DATA] SUCCESS: Sample data created", requestID)
+	writeJSONWithRequestID(w, http.StatusOK, map[string]interface{}{
+		"message":   "Образцы данных успешно созданы",
+		"timestamp": time.Now().Format(time.RFC3339),
+	}, requestID)
 }

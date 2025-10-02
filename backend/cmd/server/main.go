@@ -47,19 +47,41 @@ func main() {
 	log.Printf("[MAIN] Initializing services...")
 	analyzeSvc := &usecase.AnalyzeService{Hub: hub, Cfg: cfg}
 	dagGenerator := &usecase.DAGGeneratorService{Cfg: cfg}
-	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg, DAGGenerator: dagGenerator}
+	airflowSvc := &usecase.AirflowService{Cfg: cfg}
+	databaseSvc := &usecase.DatabaseService{Cfg: cfg}
+	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg, DAGGenerator: dagGenerator, AirflowSvc: airflowSvc}
 	previewSvc := &usecase.PreviewService{}
 	log.Printf("[MAIN] Services initialized successfully")
 
+	// Setup Airflow connections
+	log.Printf("[MAIN] Setting up Airflow connections...")
+	if err := airflowSvc.SetupConnections(); err != nil {
+		log.Printf("[MAIN] WARNING: Failed to setup Airflow connections: %v", err)
+	} else {
+		log.Printf("[MAIN] Airflow connections setup completed")
+	}
+
 	// Interfaces
 	log.Printf("[MAIN] Initializing HTTP and WebSocket handlers...")
-	httpHandlers := &httpiface.HTTPHandlers{AnalyzeSvc: analyzeSvc, PipelineSvc: pipelineSvc, PreviewSvc: previewSvc, Cfg: cfg}
+	httpHandlers := &httpiface.HTTPHandlers{
+		AnalyzeSvc:  analyzeSvc,
+		PipelineSvc: pipelineSvc,
+		PreviewSvc:  previewSvc,
+		AirflowSvc:  airflowSvc,
+		DatabaseSvc: databaseSvc,
+		Cfg:         cfg,
+	}
 	wsHandlers := &wsiface.WSHandlers{Hub: hub}
 
 	log.Printf("[MAIN] Registering API routes...")
 	r.HandleFunc("/api/preview", httpHandlers.Preview).Methods(http.MethodPost)
 	r.HandleFunc("/api/analyze", httpHandlers.Analyze).Methods(http.MethodPost)
 	r.HandleFunc("/api/pipelines", httpHandlers.CreatePipeline).Methods(http.MethodPost)
+	r.HandleFunc("/api/pipelines", httpHandlers.GetPipelines).Methods(http.MethodGet)
+	r.HandleFunc("/api/pipelines/detail", httpHandlers.GetPipeline).Methods(http.MethodGet)
+	r.HandleFunc("/api/pipelines/trigger", httpHandlers.TriggerPipeline).Methods(http.MethodPost)
+	r.HandleFunc("/api/database/status", httpHandlers.GetDatabaseStatus).Methods(http.MethodGet)
+	r.HandleFunc("/api/database/init-sample-data", httpHandlers.InitializeSampleData).Methods(http.MethodPost)
 	r.HandleFunc("/ws", wsHandlers.HandleWS)
 	log.Printf("[MAIN] API routes registered successfully")
 

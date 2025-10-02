@@ -397,22 +397,24 @@ services:
       CORE_CONF_hadoop_proxyuser_hue_groups: "*"
       HDFS_CONF_dfs_webhdfs_enabled: "true"
       HDFS_CONF_dfs_permissions_enabled: "false"
-      HDFS_CONF_dfs_nameservices: hdfs-cluster
-      HDFS_CONF_dfs_ha_namenodes_hdfs___cluster: nn1
-      HDFS_CONF_dfs_namenode_rpc___address_hdfs___cluster_nn1: hdfs-namenode:9820
-      HDFS_CONF_dfs_namenode_http___address_hdfs___cluster_nn1: hdfs-namenode:9870
+      HDFS_CONF_dfs_namenode_name_dir: /opt/hadoop/dfs/name
+      HDFS_CONF_dfs_namenode_datanode_registration_ip___hostname___check: "false"
+      HDFS_CONF_dfs_client_use_datanode_hostname: "false"
+      HDFS_CONF_dfs_datanode_use_datanode_hostname: "false"
+      # Упрощенная конфигурация без HA
+      JAVA_OPTS: "-Xmx1024m -Xms512m"
     ports:
       - "9870:9870"  # NameNode Web UI
       - "9820:9820"  # NameNode RPC
     volumes:
       - hdfs-namenode:/opt/hadoop/dfs/name
-    command: ["hdfs", "namenode"]
+    command: ["sh", "-c", "hdfs namenode -format -force && hdfs namenode"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9870/"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
     restart: always
     networks:
       - data-network
@@ -429,8 +431,13 @@ services:
       HDFS_CONF_dfs_datanode_use_datanode_hostname: "false"
       HDFS_CONF_dfs_client_use_datanode_hostname: "false"
       HDFS_CONF_dfs_datanode_data_dir: /opt/hadoop/dfs/data
+      HDFS_CONF_dfs_datanode_address: "0.0.0.0:9866"
+      HDFS_CONF_dfs_datanode_http_address: "0.0.0.0:9864"
+      HDFS_CONF_dfs_datanode_ipc_address: "0.0.0.0:9867"
+      JAVA_OPTS: "-Xmx512m -Xms256m"
     ports:
       - "9864:9864"  # DataNode Web UI
+      - "9866:9866"  # DataNode data transfer
     volumes:
       - hdfs-datanode:/opt/hadoop/dfs/data
     command: ["hdfs", "datanode"]
@@ -441,8 +448,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:9864/"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 90s
     restart: always
     networks:
       - data-network
