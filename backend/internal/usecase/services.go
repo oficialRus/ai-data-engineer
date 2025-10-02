@@ -128,7 +128,13 @@ func (s *AnalyzeService) runAnalyze(id string, preview json.RawMessage) {
 		return
 	}
 	log.Printf("[ANALYZE] Parsed ML response: %+v", mlResp)
-	s.Hub.Broadcast(scope, id, map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": mlResp}})
+
+	// Отправляем результат через WebSocket
+	doneMessage := map[string]any{"type": "done", "data": map[string]any{"id": id, "scope": scope, "payload": mlResp}}
+	log.Printf("[ANALYZE] Broadcasting 'done' message to WebSocket clients for job %s", id)
+	log.Printf("[ANALYZE] Done message payload size: %d bytes", len(fmt.Sprintf("%+v", mlResp)))
+	s.Hub.Broadcast(scope, id, doneMessage)
+	log.Printf("[ANALYZE] Successfully broadcasted 'done' message for job %s", id)
 }
 
 // buildCSVFromPreview строит CSV в памяти из JSON preview.

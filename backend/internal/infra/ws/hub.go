@@ -59,9 +59,18 @@ func (h *Hub) Run() {
 			}
 		case msg := <-h.broadcast:
 			if set, ok := h.subscribers[msg.key]; ok {
+				log.Printf("[HUB] Broadcasting message to %d clients for key: %s", len(set), msg.key)
+				sentCount := 0
 				for c := range set {
-					_ = c.WriteJSON(msg.event)
+					if err := c.WriteJSON(msg.event); err != nil {
+						log.Printf("[HUB] Failed to send message to client: %v", err)
+					} else {
+						sentCount++
+					}
 				}
+				log.Printf("[HUB] Successfully sent message to %d/%d clients for key: %s", sentCount, len(set), msg.key)
+			} else {
+				log.Printf("[HUB] No subscribers found for broadcast key: %s", msg.key)
 			}
 		}
 	}
@@ -129,5 +138,15 @@ func (h *Hub) UnsubscribeAll(conn *websocket.Conn, keys []SubscriptionKey) {
 }
 
 func (h *Hub) Broadcast(topic, id string, event any) {
-	h.broadcast <- hubBroadcast{key: Key(topic, id), event: event}
+	key := Key(topic, id)
+	log.Printf("[HUB] Broadcasting to key: %s", key)
+
+	// Проверяем, есть ли подписчики
+	if subscribers, exists := h.subscribers[key]; exists {
+		log.Printf("[HUB] Found %d subscribers for key: %s", len(subscribers), key)
+	} else {
+		log.Printf("[HUB] WARNING: No subscribers found for key: %s", key)
+	}
+
+	h.broadcast <- hubBroadcast{key: key, event: event}
 }

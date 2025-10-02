@@ -47,8 +47,15 @@ func (h *WSHandlers) HandleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("[WS_HANDLER] Subscribing to topic: %s, id: %s", p.Topic, p.ID)
+			log.Printf("[WS_HANDLER] Subscription key will be: %s", p.Topic+":"+p.ID)
 			h.Hub.Subscribe(p.Topic, p.ID, conn)
-			_ = conn.WriteJSON(map[string]any{"type": "subscribed", "data": map[string]any{"topic": p.Topic, "id": p.ID}})
+
+			confirmMsg := map[string]any{"type": "subscribed", "data": map[string]any{"topic": p.Topic, "id": p.ID}}
+			if err := conn.WriteJSON(confirmMsg); err != nil {
+				log.Printf("[WS_HANDLER] Failed to send subscription confirmation: %v", err)
+			} else {
+				log.Printf("[WS_HANDLER] Sent subscription confirmation for topic: %s, id: %s", p.Topic, p.ID)
+			}
 
 		case "resume":
 			var p resumePayload

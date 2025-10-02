@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Analyze Flow Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>Analyze Flow Test</h1>
+    
+    <div>
+        <button id="startTest">Start Analyze Test</button>
+        <button id="clearLogs">Clear Logs</button>
+    </div>
+    
+    <div id="status">Ready</div>
+    <div id="logs"></div>
+    
+    <script>
+        let ws = null;
+        let currentJobId = null;
+        
+        const status = document.getElementById('status');
+        const logs = document.getElementById('logs');
+        
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.innerHTML = `<strong>${new Date().toISOString()}:</strong> ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        function connectWebSocket() {
+            return new Promise((resolve, reject) => {
+                ws = new WebSocket('ws://localhost:8081/ws');
+                
+                ws.onopen = function(event) {
+                    log('WebSocket connected', 'success');
+                    resolve();
+                };
+                
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`WebSocket message: ${JSON.stringify(data, null, 2)}`, 'info');
+                        
+                        if (data.type === 'done' && data.data && data.data.payload) {
+                            log('✅ ANALYZE COMPLETED! Received final result', 'success');
+                            log(`Result payload keys: ${Object.keys(data.data.payload).join(', ')}`, 'success');
+                            
+                            // Здесь фронтенд должен перейти на следующую страницу
+                            status.textContent = 'Analysis completed - should navigate to next page!';
+                        }
+                        
+                        if (data.type === 'subscribed') {
+                            log('✅ Successfully subscribed to job updates', 'success');
+                        }
+                        
+                        if (data.type === 'error') {
+                            log(`❌ Error: ${JSON.stringify(data.data)}`, 'error');
+                        }
+                        
+                    } catch (e) {
+                        log(`Failed to parse WebSocket message: ${event.data}`, 'error');
+                    }
+                };
+                
+                ws.onerror = function(error) {
+                    log(`WebSocket error: ${error}`, 'error');
+                    reject(error);
+                };
+                
+                ws.onclose = function(event) {
+                    log(`WebSocket closed: ${event.code} - ${event.reason}`, 'info');
+                };
+            });
+        }
+        
+        async function startAnalyzeTest() {
+            try {
+                status.textContent = 'Starting test...';
+                
+                // 1. Connect WebSocket
+                await connectWebSocket();
+                
+                // 2. Start analyze request
+                log('Starting analyze request...', 'info');
+                
+                const analyzePayload = {
+                    preview: {
+                        columns: [
+                            {name: "id", type: "string"},
+                            {name: "name", type: "string"},
+                            {name: "value", type: "number"}
+                        ],
+                        rows: [
+                            {id: "1", name: "test1", value: 100},
+                            {id: "2", name: "test2", value: 200}
+                        ],
+                        rowCount: 2
+                    }
+                };
+                
+                const response = await fetch('http://localhost:8081/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(analyzePayload)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+                
+                const result = await response.json();
+                currentJobId = result.jobID;
+                
+                log(`✅ Analyze started with job ID: ${currentJobId}`, 'success');
+                status.textContent = `Analyze started: ${currentJobId}`;
+                
+                // 3. Subscribe to job updates
+                log('Subscribing to job updates...', 'info');
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    data: {
+                        topic: 'analyze',
+                        id: currentJobId
+                    }
+                }));
+                
+                log('✅ Test setup complete. Waiting for results...', 'success');
+                
+            } catch (error) {
+                log(`❌ Test failed: ${error.message}`, 'error');
+                status.textContent = `Test failed: ${error.message}`;
+            }
+        }
+        
+        document.getElementById('startTest').addEventListener('click', startAnalyzeTest);
+        document.getElementById('clearLogs').addEventListener('click', () => {
+            logs.innerHTML = '';
+        });
+    </script>
+</body>
+</html>
