@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/user/ai-data-engineer/backend/internal/config"
 	domain "github.com/user/ai-data-engineer/backend/internal/domain"
 	"github.com/user/ai-data-engineer/backend/internal/usecase"
@@ -454,10 +455,11 @@ func (h *HTTPHandlers) GetPipeline(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	requestID := fmt.Sprintf("get-pipeline-%d", start.UnixNano())
 
-	// Извлекаем ID пайплайна из URL
-	pipelineID := r.URL.Query().Get("id")
+	// Извлекаем ID пайплайна из URL path
+	vars := mux.Vars(r)
+	pipelineID := vars["id"]
 	if pipelineID == "" {
-		writeErrorWithRequestID(w, http.StatusBadRequest, "Параметр 'id' обязателен", requestID)
+		writeErrorWithRequestID(w, http.StatusBadRequest, "ID пайплайна обязателен", requestID)
 		return
 	}
 

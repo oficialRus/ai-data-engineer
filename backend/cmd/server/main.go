@@ -88,7 +88,7 @@ func main() {
 	r.HandleFunc("/api/analyze", httpHandlers.Analyze).Methods(http.MethodPost)
 	r.HandleFunc("/api/pipelines", httpHandlers.CreatePipeline).Methods(http.MethodPost)
 	r.HandleFunc("/api/pipelines", httpHandlers.GetPipelines).Methods(http.MethodGet)
-	r.HandleFunc("/api/pipelines/detail", httpHandlers.GetPipeline).Methods(http.MethodGet)
+	r.HandleFunc("/api/pipelines/{id}", httpHandlers.GetPipeline).Methods(http.MethodGet)
 	r.HandleFunc("/api/pipelines/trigger", httpHandlers.TriggerPipeline).Methods(http.MethodPost)
 	r.HandleFunc("/api/database/status", httpHandlers.GetDatabaseStatus).Methods(http.MethodGet)
 	r.HandleFunc("/api/database/init-sample-data", httpHandlers.InitializeSampleData).Methods(http.MethodPost)
