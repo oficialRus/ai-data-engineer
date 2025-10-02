@@ -53,12 +53,14 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           r,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,  // Увеличено для больших файлов
+		ReadTimeout:       60 * time.Second,  // Увеличено с 10 до 60 секунд
+		WriteTimeout:      60 * time.Second,  // Увеличено с 10 до 60 секунд
+		IdleTimeout:       120 * time.Second, // Увеличено с 60 до 120 секунд
 	}
 	log.Printf("server listening on %s (ml: %s)", cfg.Server.Addr, cfg.MLBaseURL)
+	log.Printf("server configuration - ReadTimeout: %v, WriteTimeout: %v, MaxFileSize: %d bytes",
+		60*time.Second, 60*time.Second, cfg.Limits.MaxFileSizeBytes)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

@@ -29,8 +29,14 @@ func (h *HTTPHandlers) Preview(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[%s] [PREVIEW] Starting request from %s", requestID, r.RemoteAddr)
 	log.Printf("[%s] [PREVIEW] Content-Type: %s", requestID, r.Header.Get("Content-Type"))
 	log.Printf("[%s] [PREVIEW] Content-Length: %s", requestID, r.Header.Get("Content-Length"))
+	log.Printf("[%s] [PREVIEW] Request URL: %s", requestID, r.URL.String())
+	log.Printf("[%s] [PREVIEW] Request Method: %s", requestID, r.Method)
 
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[%s] [PREVIEW] PANIC: %v", requestID, r)
+			writeErrorWithRequestID(w, http.StatusInternalServerError, "Internal server error", requestID)
+		}
 		duration := time.Since(start)
 		log.Printf("[%s] [PREVIEW] Request completed in %v", requestID, duration)
 	}()
@@ -40,11 +46,17 @@ func (h *HTTPHandlers) Preview(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[%s] [PREVIEW] Processing multipart/form-data request", requestID)
 		// file upload
 		log.Printf("[%s] [PREVIEW] Parsing multipart form with max size: %d bytes", requestID, h.Cfg.Limits.MaxFileSizeBytes)
+		log.Printf("[%s] [PREVIEW] Starting ParseMultipartForm...", requestID)
+
+		parseStart := time.Now()
 		if err := r.ParseMultipartForm(h.Cfg.Limits.MaxFileSizeBytes); err != nil {
-			log.Printf("[%s] [PREVIEW] ERROR: Failed to parse multipart form: %v", requestID, err)
+			parseDuration := time.Since(parseStart)
+			log.Printf("[%s] [PREVIEW] ERROR: Failed to parse multipart form after %v: %v", requestID, parseDuration, err)
 			writeErrorWithRequestID(w, http.StatusBadRequest, "Ошибка загрузки файла: "+err.Error(), requestID)
 			return
 		}
+		parseDuration := time.Since(parseStart)
+		log.Printf("[%s] [PREVIEW] ParseMultipartForm completed in %v", requestID, parseDuration)
 
 		log.Printf("[%s] [PREVIEW] Getting file from form field 'file'", requestID)
 		file, header, err := r.FormFile("file")

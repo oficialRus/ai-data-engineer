@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Upload Test</title>
+</head>
+<body>
+    <h1>File Upload Test</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <div>
+            <label for="file">Choose CSV file:</label>
+            <input type="file" id="file" name="file" accept=".csv" required>
+        </div>
+        <div>
+            <label for="fileType">File Type:</label>
+            <select id="fileType" name="fileType">
+                <option value="csv">CSV</option>
+                <option value="json">JSON</option>
+                <option value="xml">XML</option>
+            </select>
+        </div>
+        <div>
+            <button type="submit">Upload and Preview</button>
+        </div>
+    </form>
+    
+    <div id="status"></div>
+    <div id="result"></div>
+    
+    <script>
+        const form = document.getElementById('uploadForm');
+        const status = document.getElementById('status');
+        const result = document.getElementById('result');
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('file');
+            const fileTypeInput = document.getElementById('fileType');
+            
+            if (!fileInput.files[0]) {
+                status.textContent = 'Please select a file';
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('fileType', fileTypeInput.value);
+            
+            status.textContent = 'Uploading...';
+            status.style.color = 'blue';
+            
+            const startTime = Date.now();
+            
+            try {
+                const response = await fetch('http://localhost:8081/api/preview', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const duration = Date.now() - startTime;
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    status.textContent = `Success! (${duration}ms)`;
+                    status.style.color = 'green';
+                    
+                    result.innerHTML = `
+                        <h3>Preview Result:</h3>
+                        <p><strong>Columns:</strong> ${data.columns.length}</p>
+                        <p><strong>Rows:</strong> ${data.rowCount}</p>
+                        <h4>Columns:</h4>
+                        <ul>
+                            ${data.columns.map(col => `<li>${col.Name} (${col.Type})</li>`).join('')}
+                        </ul>
+                        <h4>First few rows:</h4>
+                        <pre>${JSON.stringify(data.rows.slice(0, 3), null, 2)}</pre>
+                    `;
+                } else {
+                    const errorData = await response.json();
+                    status.textContent = `Error: ${response.status} (${duration}ms)`;
+                    status.style.color = 'red';
+                    result.innerHTML = `<pre>${JSON.stringify(errorData, null, 2)}</pre>`;
+                }
+            } catch (error) {
+                const duration = Date.now() - startTime;
+                status.textContent = `Network Error (${duration}ms): ${error.message}`;
+                status.style.color = 'red';
+                result.innerHTML = '';
+            }
+        });
+    </script>
+</body>
+</html>
