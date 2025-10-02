@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Client Format Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        .warning { background: #fff3e0; color: #f57c00; }
+        pre { white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto; }
+        .result-section { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Client Format Test</h1>
+    
+    <div>
+        <button id="startTest">Start Full Test</button>
+        <button id="clearLogs">Clear Logs</button>
+    </div>
+    
+    <div id="status">Ready</div>
+    <div id="logs"></div>
+    
+    <div id="results" style="display: none;">
+        <h2>Analysis Results</h2>
+        <div id="recommendation" class="result-section">
+            <h3>Recommendation</h3>
+            <div id="recommendationContent"></div>
+        </div>
+        <div id="ddl" class="result-section">
+            <h3>Generated DDL</h3>
+            <div id="ddlContent"></div>
+        </div>
+    </div>
+    
+    <script>
+        let ws = null;
+        let currentJobId = null;
+        
+        const status = document.getElementById('status');
+        const logs = document.getElementById('logs');
+        const results = document.getElementById('results');
+        const recommendationContent = document.getElementById('recommendationContent');
+        const ddlContent = document.getElementById('ddlContent');
+        
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.innerHTML = `<strong>${new Date().toISOString()}:</strong> ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        function connectWebSocket() {
+            return new Promise((resolve, reject) => {
+                ws = new WebSocket('ws://localhost:8081/ws');
+                
+                ws.onopen = function(event) {
+                    log('WebSocket connected', 'success');
+                    resolve();
+                };
+                
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`WebSocket message: ${data.type}`, 'info');
+                        
+                        if (data.type === 'done' && data.data && data.data.payload) {
+                            log('✅ ANALYZE COMPLETED! Received final result', 'success');
+                            
+                            // Проверяем формат ответа
+                            const payload = data.data.payload;
+                            
+                            if (payload.recommendation && payload.ddl) {
+                                log('✅ Correct client format received!', 'success');
+                                displayResults(payload);
+                                
+                                // Здесь фронтенд должен перейти на следующую страницу
+                                status.textContent = '🎉 Analysis completed - ready to navigate!';
+                                status.style.color = 'green';
+                                status.style.fontWeight = 'bold';
+                                
+                            } else {
+                                log('❌ Incorrect format - missing recommendation or ddl', 'error');
+                                log(`Received keys: ${Object.keys(payload).join(', ')}`, 'warning');
+                            }
+                        }
+                        
+                        if (data.type === 'subscribed') {
+                            log('✅ Successfully subscribed to job updates', 'success');
+                        }
+                        
+                        if (data.type === 'progress') {
+                            log(`📊 Progress: ${data.data.percent}% - ${data.data.stage}`, 'info');
+                        }
+                        
+                        if (data.type === 'error') {
+                            log(`❌ Error: ${JSON.stringify(data.data)}`, 'error');
+                        }
+                        
+                    } catch (e) {
+                        log(`Failed to parse WebSocket message: ${event.data}`, 'error');
+                    }
+                };
+                
+                ws.onerror = function(error) {
+                    log(`WebSocket error: ${error}`, 'error');
+                    reject(error);
+                };
+                
+                ws.onclose = function(event) {
+                    log(`WebSocket closed: ${event.code} - ${event.reason}`, 'info');
+                };
+            });
+        }
+        
+        function displayResults(payload) {
+            results.style.display = 'block';
+            
+            // Display recommendation
+            const rec = payload.recommendation;
+            recommendationContent.innerHTML = `
+                <p><strong>Target System:</strong> ${rec.target}</p>
+                <p><strong>Confidence:</strong> ${(rec.confidence * 100).toFixed(1)}%</p>
+                <p><strong>Rationale:</strong> ${rec.rationale}</p>
+                <p><strong>Schedule Hint:</strong> ${rec.schedule_hint}</p>
+            `;
+            
+            // Display DDL
+            const ddl = payload.ddl;
+            ddlContent.innerHTML = `
+                <h4>ClickHouse:</h4>
+                <pre>${ddl.clickhouse}</pre>
+                <h4>PostgreSQL:</h4>
+                <pre>${ddl.postgresql}</pre>
+                <h4>HDFS:</h4>
+                <pre>${ddl.hdfs}</pre>
+            `;
+        }
+        
+        async function startFullTest() {
+            try {
+                status.textContent = 'Starting test...';
+                results.style.display = 'none';
+                
+                // 1. Connect WebSocket
+                await connectWebSocket();
+                
+                // 2. Start analyze request
+                log('Starting analyze request...', 'info');
+                
+                const analyzePayload = {
+                    preview: {
+                        columns: [
+                            {name: "created", type: "string"},
+                            {name: "ticket_price", type: "number"},
+                            {name: "event_id", type: "number"},
+                            {name: "is_active", type: "boolean"},
+                            {name: "start_datetime", type: "string"}
+                        ],
+                        rows: [
+                            {created: "2023-01-01T10:00:00Z", ticket_price: 100.5, event_id: 1, is_active: true, start_datetime: "2023-01-01T18:00:00Z"},
+                            {created: "2023-01-02T11:00:00Z", ticket_price: 150.0, event_id: 2, is_active: true, start_datetime: "2023-01-02T19:00:00Z"}
+                        ],
+                        rowCount: 2
+                    }
+                };
+                
+                const response = await fetch('http://localhost:8081/api/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(analyzePayload)
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                const result = await response.json();
+                
+                // Check if response has correct format
+                if (result.job_id) {
+                    currentJobId = result.job_id;
+                    log(`✅ Analyze started with job_id: ${currentJobId}`, 'success');
+                } else if (result.jobID) {
+                    log(`⚠️ Received jobID instead of job_id: ${result.jobID}`, 'warning');
+                    currentJobId = result.jobID;
+                } else {
+                    throw new Error('No job ID received in response');
+                }
+                
+                status.textContent = `Analyze started: ${currentJobId}`;
+                
+                // 3. Subscribe to job updates
+                log('Subscribing to job updates...', 'info');
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    data: {
+                        topic: 'analyze',
+                        id: currentJobId
+                    }
+                }));
+                
+                log('✅ Test setup complete. Waiting for results...', 'success');
+                
+            } catch (error) {
+                log(`❌ Test failed: ${error.message}`, 'error');
+                status.textContent = `Test failed: ${error.message}`;
+            }
+        }
+        
+        document.getElementById('startTest').addEventListener('click', startFullTest);
+        document.getElementById('clearLogs').addEventListener('click', () => {
+            logs.innerHTML = '';
+            results.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
