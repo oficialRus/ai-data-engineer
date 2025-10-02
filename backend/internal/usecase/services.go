@@ -28,6 +28,7 @@ type PipelineService struct {
 	Cfg          config.AppConfig
 	DAGGenerator *DAGGeneratorService
 	AirflowSvc   *AirflowService
+	StorageSvc   *PipelineStorageService
 }
 
 func (s *AnalyzeService) StartAnalyze(preview json.RawMessage) (string, error) {
@@ -38,25 +39,76 @@ func (s *AnalyzeService) StartAnalyze(preview json.RawMessage) (string, error) {
 
 func (s *PipelineService) CreatePipeline(req json.RawMessage) (string, error) {
 	id := uuid.NewString()
+	log.Printf("[PIPELINE] Creating pipeline with ID: %s", id)
 
 	// Парсим запрос для генерации DAG
 	var pipelineReq domain.CreatePipelineRequest
 	if err := json.Unmarshal(req, &pipelineReq); err != nil {
+		log.Printf("[PIPELINE] ERROR: Failed to parse pipeline request: %v", err)
 		return "", fmt.Errorf("failed to parse pipeline request: %w", err)
 	}
 
+	// Создаем объект пайплайна для сохранения
+	pipeline := domain.Pipeline{
+		ID:         id,
+		Name:       fmt.Sprintf("Pipeline_%s", id[:8]),
+		SourceType: pipelineReq.SourceType,
+		Source:     pipelineReq.Source,
+		Target:     pipelineReq.Target,
+		DDL:        mustMarshal(pipelineReq.DDL),
+		Schedule:   mustMarshal(pipelineReq.Schedule),
+		Status:     "created",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	// Сохраняем пайплайн в базе данных
+	if s.StorageSvc != nil {
+		if err := s.StorageSvc.SavePipeline(pipeline); err != nil {
+			log.Printf("[PIPELINE] ERROR: Failed to save pipeline to database: %v", err)
+			return "", fmt.Errorf("failed to save pipeline: %w", err)
+		}
+		log.Printf("[PIPELINE] Pipeline saved to database: %s", id)
+	}
+
 	// Генерируем DAG файл
+	var dagFilePath *string
 	if s.DAGGenerator != nil {
 		if err := s.DAGGenerator.GenerateDAG(pipelineReq, id); err != nil {
 			log.Printf("[PIPELINE] Failed to generate DAG for pipeline %s: %v", id, err)
-			// Не прерываем создание пайплайна из-за ошибки генерации DAG
+			// Обновляем статус на ошибку
+			if s.StorageSvc != nil {
+				s.StorageSvc.UpdatePipelineStatus(id, "dag_error")
+			}
 		} else {
 			log.Printf("[PIPELINE] DAG generated successfully for pipeline %s", id)
+			dagPath := fmt.Sprintf("ops/airflow/dags/pipe_%s_v1.py", strings.ReplaceAll(id, "-", "_"))
+			dagFilePath = &dagPath
+
+			// Обновляем статус на успешный
+			if s.StorageSvc != nil {
+				s.StorageSvc.UpdatePipelineStatus(id, "ready")
+			}
 		}
+	}
+
+	// Обновляем путь к DAG файлу если он был создан
+	if dagFilePath != nil && s.StorageSvc != nil {
+		pipeline.DAGFilePath = dagFilePath
+		s.StorageSvc.SavePipeline(pipeline)
 	}
 
 	go s.runPipeline(id, req)
 	return id, nil
+}
+
+// mustMarshal маршалит объект в JSON, паникует при ошибке
+func mustMarshal(v interface{}) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal: %v", err))
+	}
+	return data
 }
 
 func (s *AnalyzeService) runAnalyze(id string, preview json.RawMessage) {

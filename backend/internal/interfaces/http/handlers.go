@@ -17,12 +17,13 @@ import (
 const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 type HTTPHandlers struct {
-	AnalyzeSvc  *usecase.AnalyzeService
-	PipelineSvc *usecase.PipelineService
-	PreviewSvc  *usecase.PreviewService
-	AirflowSvc  *usecase.AirflowService
-	DatabaseSvc *usecase.DatabaseService
-	Cfg         config.AppConfig
+	AnalyzeSvc         *usecase.AnalyzeService
+	PipelineSvc        *usecase.PipelineService
+	PreviewSvc         *usecase.PreviewService
+	AirflowSvc         *usecase.AirflowService
+	DatabaseSvc        *usecase.DatabaseService
+	PipelineStorageSvc *usecase.PipelineStorageService
+	Cfg                config.AppConfig
 }
 
 func (h *HTTPHandlers) Preview(w http.ResponseWriter, r *http.Request) {
@@ -433,56 +434,12 @@ func (h *HTTPHandlers) GetPipelines(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[%s] [GET_PIPELINES] Request completed in %v", requestID, duration)
 	}()
 
-	log.Printf("[%s] [GET_PIPELINES] Fetching DAGs from Airflow", requestID)
-	dags, err := h.AirflowSvc.GetDAGs()
+	log.Printf("[%s] [GET_PIPELINES] Fetching pipelines from database", requestID)
+	pipelines, err := h.PipelineStorageSvc.GetPipelines()
 	if err != nil {
-		log.Printf("[%s] [GET_PIPELINES] ERROR: Failed to get DAGs: %v", requestID, err)
+		log.Printf("[%s] [GET_PIPELINES] ERROR: Failed to get pipelines: %v", requestID, err)
 		writeErrorWithRequestID(w, http.StatusInternalServerError, "Ошибка получения пайплайнов: "+err.Error(), requestID)
 		return
-	}
-
-	// Фильтруем только наши сгенерированные DAG (начинающиеся с "pipe_")
-	var pipelines []map[string]interface{}
-	for _, dag := range dags {
-		if strings.HasPrefix(dag.DagID, "pipe_") {
-			log.Printf("[%s] [GET_PIPELINES] Found pipeline DAG: %s", requestID, dag.DagID)
-
-			// Получаем информацию о последних запусках
-			runs, err := h.AirflowSvc.GetDAGRuns(dag.DagID)
-			if err != nil {
-				log.Printf("[%s] [GET_PIPELINES] WARNING: Failed to get runs for %s: %v", requestID, dag.DagID, err)
-				runs = []usecase.AirflowDAGRun{} // Пустой массив если не удалось получить
-			}
-
-			var lastRun *usecase.AirflowDAGRun
-			if len(runs) > 0 {
-				lastRun = &runs[0] // Первый элемент - последний запуск
-			}
-
-			pipeline := map[string]interface{}{
-				"id":          dag.DagID,
-				"name":        dag.DagID,
-				"description": dag.Description,
-				"is_paused":   dag.IsPaused,
-				"is_active":   dag.IsActive,
-				"last_parsed": dag.LastParsed,
-				"file_loc":    dag.FileLoc,
-				"runs_count":  len(runs),
-			}
-
-			if lastRun != nil {
-				pipeline["last_run"] = map[string]interface{}{
-					"dag_run_id":       lastRun.DagRunID,
-					"state":            lastRun.State,
-					"execution_date":   lastRun.ExecutionDate,
-					"start_date":       lastRun.StartDate,
-					"end_date":         lastRun.EndDate,
-					"external_trigger": lastRun.ExternalTrigger,
-				}
-			}
-
-			pipelines = append(pipelines, pipeline)
-		}
 	}
 
 	log.Printf("[%s] [GET_PIPELINES] SUCCESS: Found %d pipelines", requestID, len(pipelines))
@@ -511,11 +468,11 @@ func (h *HTTPHandlers) GetPipeline(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[%s] [GET_PIPELINE] Request completed in %v", requestID, duration)
 	}()
 
-	// Получаем информацию о DAG
-	log.Printf("[%s] [GET_PIPELINE] Fetching DAG info from Airflow", requestID)
-	dag, err := h.AirflowSvc.GetDAG(pipelineID)
+	// Получаем информацию о пайплайне из базы данных
+	log.Printf("[%s] [GET_PIPELINE] Fetching pipeline info from database", requestID)
+	pipeline, err := h.PipelineStorageSvc.GetPipeline(pipelineID)
 	if err != nil {
-		log.Printf("[%s] [GET_PIPELINE] ERROR: Failed to get DAG: %v", requestID, err)
+		log.Printf("[%s] [GET_PIPELINE] ERROR: Failed to get pipeline: %v", requestID, err)
 		status := http.StatusNotFound
 		if !strings.Contains(err.Error(), "not found") {
 			status = http.StatusInternalServerError
@@ -524,27 +481,7 @@ func (h *HTTPHandlers) GetPipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Получаем историю запусков
-	log.Printf("[%s] [GET_PIPELINE] Fetching DAG runs", requestID)
-	runs, err := h.AirflowSvc.GetDAGRuns(pipelineID)
-	if err != nil {
-		log.Printf("[%s] [GET_PIPELINE] WARNING: Failed to get runs: %v", requestID, err)
-		runs = []usecase.AirflowDAGRun{} // Пустой массив если не удалось получить
-	}
-
-	pipeline := map[string]interface{}{
-		"id":          dag.DagID,
-		"name":        dag.DagID,
-		"description": dag.Description,
-		"is_paused":   dag.IsPaused,
-		"is_active":   dag.IsActive,
-		"last_parsed": dag.LastParsed,
-		"file_loc":    dag.FileLoc,
-		"runs":        runs,
-		"runs_count":  len(runs),
-	}
-
-	log.Printf("[%s] [GET_PIPELINE] SUCCESS: Retrieved pipeline %s with %d runs", requestID, pipelineID, len(runs))
+	log.Printf("[%s] [GET_PIPELINE] SUCCESS: Retrieved pipeline %s", requestID, pipelineID)
 	writeJSONWithRequestID(w, http.StatusOK, pipeline, requestID)
 }
 

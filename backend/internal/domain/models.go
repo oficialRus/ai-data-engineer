@@ -1,6 +1,9 @@
 package domain
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 type AnalyzePreviewColumn struct {
 	Name string `json:"name"`
@@ -66,4 +69,34 @@ type CreatePipelineRequest struct {
 
 type CreatePipelineResponse struct {
 	ID string `json:"id"`
+}
+
+// Pipeline представляет сохраненный пайплайн
+type Pipeline struct {
+	ID          string                 `json:"id" db:"id"`
+	Name        string                 `json:"name" db:"name"`
+	SourceType  string                 `json:"source_type" db:"source_type"`
+	Source      json.RawMessage        `json:"source" db:"source"`
+	Target      *string                `json:"target" db:"target"`
+	DDL         json.RawMessage        `json:"ddl" db:"ddl"`
+	Schedule    json.RawMessage        `json:"schedule" db:"schedule"`
+	Status      string                 `json:"status" db:"status"`
+	CreatedAt   time.Time              `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at" db:"updated_at"`
+	DAGFilePath *string                `json:"dag_file_path,omitempty" db:"dag_file_path"`
+	LastRun     *time.Time             `json:"last_run,omitempty" db:"last_run"`
+	RunCount    int                    `json:"run_count" db:"run_count"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// PipelineListItem представляет элемент списка пайплайнов
+type PipelineListItem struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	SourceType string     `json:"source_type"`
+	Target     *string    `json:"target"`
+	Status     string     `json:"status"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastRun    *time.Time `json:"last_run,omitempty"`
+	RunCount   int        `json:"run_count"`
 }

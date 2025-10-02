@@ -49,9 +49,18 @@ func main() {
 	dagGenerator := &usecase.DAGGeneratorService{Cfg: cfg}
 	airflowSvc := &usecase.AirflowService{Cfg: cfg}
 	databaseSvc := &usecase.DatabaseService{Cfg: cfg}
-	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg, DAGGenerator: dagGenerator, AirflowSvc: airflowSvc}
+	pipelineStorageSvc := &usecase.PipelineStorageService{Cfg: cfg}
+	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg, DAGGenerator: dagGenerator, AirflowSvc: airflowSvc, StorageSvc: pipelineStorageSvc}
 	previewSvc := &usecase.PreviewService{}
 	log.Printf("[MAIN] Services initialized successfully")
+
+	// Initialize pipeline storage tables
+	log.Printf("[MAIN] Initializing pipeline storage...")
+	if err := pipelineStorageSvc.InitializeTables(); err != nil {
+		log.Printf("[MAIN] WARNING: Failed to initialize pipeline tables: %v", err)
+	} else {
+		log.Printf("[MAIN] Pipeline storage initialized successfully")
+	}
 
 	// Setup Airflow connections
 	log.Printf("[MAIN] Setting up Airflow connections...")
@@ -64,12 +73,13 @@ func main() {
 	// Interfaces
 	log.Printf("[MAIN] Initializing HTTP and WebSocket handlers...")
 	httpHandlers := &httpiface.HTTPHandlers{
-		AnalyzeSvc:  analyzeSvc,
-		PipelineSvc: pipelineSvc,
-		PreviewSvc:  previewSvc,
-		AirflowSvc:  airflowSvc,
-		DatabaseSvc: databaseSvc,
-		Cfg:         cfg,
+		AnalyzeSvc:         analyzeSvc,
+		PipelineSvc:        pipelineSvc,
+		PreviewSvc:         previewSvc,
+		AirflowSvc:         airflowSvc,
+		DatabaseSvc:        databaseSvc,
+		PipelineStorageSvc: pipelineStorageSvc,
+		Cfg:                cfg,
 	}
 	wsHandlers := &wsiface.WSHandlers{Hub: hub}
 
