@@ -340,71 +340,126 @@ func generateDDLForTargets(mlResp map[string]any) map[string]string {
 }
 
 func generateClickHouseDDL(tableName string, columns []string, dtypes map[string]any) string {
+	log.Printf("[DDL] [CLICKHOUSE] Generating DDL for table: %s", tableName)
 	ddl := fmt.Sprintf("CREATE TABLE %s (\n", tableName)
+
+	var primaryKey string
 
 	for i, col := range columns {
 		chType := "String" // default
 		if dtypes != nil {
 			if dtype, ok := dtypes[col].(string); ok {
+				log.Printf("[DDL] [CLICKHOUSE] Column %s has type: %s", col, dtype)
 				switch dtype {
-				case "int64", "uint32", "uint16":
+				case "int64":
 					chType = "Int64"
+					if strings.Contains(strings.ToLower(col), "id") && primaryKey == "" {
+						primaryKey = col
+					}
+				case "uint32":
+					chType = "UInt32"
+					if strings.Contains(strings.ToLower(col), "id") && primaryKey == "" {
+						primaryKey = col
+					}
+				case "uint16":
+					chType = "UInt16"
 				case "uint8":
 					chType = "UInt8"
-				case "float32", "float64":
+				case "float32":
+					chType = "Float32"
+				case "float64":
 					chType = "Float64"
 				case "bool":
 					chType = "Bool"
+				case "category":
+					chType = "LowCardinality(String)"
 				case "object":
-					if strings.Contains(col, "date") || strings.Contains(col, "time") {
+					if strings.Contains(strings.ToLower(col), "date") || strings.Contains(strings.ToLower(col), "time") || strings.Contains(strings.ToLower(col), "created") || strings.Contains(strings.ToLower(col), "updated") {
 						chType = "DateTime"
 					} else {
 						chType = "String"
 					}
+				default:
+					chType = "String"
 				}
 			}
 		}
 
-		ddl += fmt.Sprintf("    %s %s", col, chType)
+		ddl += fmt.Sprintf("    `%s` %s", col, chType)
 		if i < len(columns)-1 {
 			ddl += ","
 		}
 		ddl += "\n"
 	}
 
-	ddl += ") ENGINE = MergeTree()\nORDER BY tuple();"
+	// Определяем ORDER BY
+	orderBy := "tuple()"
+	if primaryKey != "" {
+		orderBy = fmt.Sprintf("`%s`", primaryKey)
+		log.Printf("[DDL] [CLICKHOUSE] Using primary key for ORDER BY: %s", primaryKey)
+	} else if len(columns) > 0 {
+		orderBy = fmt.Sprintf("`%s`", columns[0])
+		log.Printf("[DDL] [CLICKHOUSE] Using first column for ORDER BY: %s", columns[0])
+	}
+
+	ddl += fmt.Sprintf(") ENGINE = MergeTree()\nORDER BY %s;", orderBy)
+	log.Printf("[DDL] [CLICKHOUSE] Generated DDL successfully")
 	return ddl
 }
 
 func generatePostgreSQLDDL(tableName string, columns []string, dtypes map[string]any) string {
+	log.Printf("[DDL] [POSTGRESQL] Generating DDL for table: %s", tableName)
 	ddl := fmt.Sprintf("CREATE TABLE %s (\n", tableName)
+
+	var primaryKey string
 
 	for i, col := range columns {
 		pgType := "TEXT" // default
+		constraints := ""
+
 		if dtypes != nil {
 			if dtype, ok := dtypes[col].(string); ok {
+				log.Printf("[DDL] [POSTGRESQL] Column %s has type: %s", col, dtype)
 				switch dtype {
 				case "int64":
 					pgType = "BIGINT"
-				case "uint32", "uint16":
+					if strings.Contains(strings.ToLower(col), "id") && primaryKey == "" {
+						primaryKey = col
+						constraints = " PRIMARY KEY"
+					}
+				case "uint32":
+					pgType = "INTEGER"
+					if strings.Contains(strings.ToLower(col), "id") && primaryKey == "" {
+						primaryKey = col
+						constraints = " PRIMARY KEY"
+					}
+				case "uint16":
 					pgType = "INTEGER"
 				case "uint8":
 					pgType = "SMALLINT"
-				case "float32", "float64":
+				case "float32":
+					pgType = "REAL"
+				case "float64":
 					pgType = "DOUBLE PRECISION"
 				case "bool":
 					pgType = "BOOLEAN"
+				case "category":
+					pgType = "VARCHAR(255)"
 				case "object":
-					if strings.Contains(col, "date") || strings.Contains(col, "time") {
-						pgType = "TIMESTAMP"
+					if strings.Contains(strings.ToLower(col), "date") || strings.Contains(strings.ToLower(col), "time") || strings.Contains(strings.ToLower(col), "created") || strings.Contains(strings.ToLower(col), "updated") {
+						pgType = "TIMESTAMP WITH TIME ZONE"
+					} else if strings.Contains(strings.ToLower(col), "email") {
+						pgType = "VARCHAR(255)"
 					} else {
 						pgType = "TEXT"
 					}
+				default:
+					pgType = "TEXT"
 				}
 			}
 		}
 
-		ddl += fmt.Sprintf("    %s %s", col, pgType)
+		ddl += fmt.Sprintf("    \"%s\" %s%s", col, pgType, constraints)
 		if i < len(columns)-1 {
 			ddl += ","
 		}
@@ -412,21 +467,35 @@ func generatePostgreSQLDDL(tableName string, columns []string, dtypes map[string
 	}
 
 	ddl += ");"
+
+	// Добавляем индексы для часто используемых колонок
+	for _, col := range columns {
+		colLower := strings.ToLower(col)
+		if strings.Contains(colLower, "date") || strings.Contains(colLower, "time") || strings.Contains(colLower, "created") || strings.Contains(colLower, "updated") {
+			ddl += fmt.Sprintf("\nCREATE INDEX idx_%s_%s ON %s (\"%s\");", tableName, col, tableName, col)
+		}
+	}
+
+	log.Printf("[DDL] [POSTGRESQL] Generated DDL successfully")
 	return ddl
 }
 
 func generateHDFSDDL(tableName string, columns []string, dtypes map[string]any) string {
+	log.Printf("[DDL] [HDFS] Generating Hive DDL for table: %s", tableName)
 	ddl := fmt.Sprintf("CREATE TABLE %s (\n", tableName)
 
 	for i, col := range columns {
 		hiveType := "STRING" // default
 		if dtypes != nil {
 			if dtype, ok := dtypes[col].(string); ok {
+				log.Printf("[DDL] [HDFS] Column %s has type: %s", col, dtype)
 				switch dtype {
 				case "int64":
 					hiveType = "BIGINT"
-				case "uint32", "uint16":
+				case "uint32":
 					hiveType = "INT"
+				case "uint16":
+					hiveType = "SMALLINT"
 				case "uint8":
 					hiveType = "TINYINT"
 				case "float32":
@@ -435,23 +504,32 @@ func generateHDFSDDL(tableName string, columns []string, dtypes map[string]any) 
 					hiveType = "DOUBLE"
 				case "bool":
 					hiveType = "BOOLEAN"
+				case "category":
+					hiveType = "STRING"
 				case "object":
-					if strings.Contains(col, "date") || strings.Contains(col, "time") {
+					if strings.Contains(strings.ToLower(col), "date") || strings.Contains(strings.ToLower(col), "time") || strings.Contains(strings.ToLower(col), "created") || strings.Contains(strings.ToLower(col), "updated") {
 						hiveType = "TIMESTAMP"
 					} else {
 						hiveType = "STRING"
 					}
+				default:
+					hiveType = "STRING"
 				}
 			}
 		}
 
-		ddl += fmt.Sprintf("    %s %s", col, hiveType)
+		ddl += fmt.Sprintf("    `%s` %s", col, hiveType)
 		if i < len(columns)-1 {
 			ddl += ","
 		}
 		ddl += "\n"
 	}
 
-	ddl += ")\nSTORED AS PARQUET;"
+	ddl += ")\nSTORED AS PARQUET\nLOCATION '/data/warehouse/" + tableName + "'\nTBLPROPERTIES (\n"
+	ddl += "    'parquet.compression'='SNAPPY',\n"
+	ddl += "    'transactional'='true'\n"
+	ddl += ");"
+
+	log.Printf("[DDL] [HDFS] Generated DDL successfully")
 	return ddl
 }

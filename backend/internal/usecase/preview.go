@@ -24,17 +24,17 @@ type PreviewService struct{}
 
 func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) (PreviewResult, error) {
 	log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing file: %s, type: %s, size: %d", fileHeader.Filename, typ, fileHeader.Size)
-	
+
 	f, err := fileHeader.Open()
 	if err != nil {
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: Failed to open file: %v", err)
 		return PreviewResult{}, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-	
+
 	normalizedType := strings.ToLower(typ)
 	log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Normalized file type: %s", normalizedType)
-	
+
 	switch normalizedType {
 	case "csv":
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing as CSV")
@@ -45,7 +45,7 @@ func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) 
 		}
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] SUCCESS: CSV processed - columns: %d, rows: %d", len(result.Columns), len(result.Rows))
 		return result, nil
-		
+
 	case "json":
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing as JSON")
 		result, err := previewJSON(f)
@@ -55,7 +55,7 @@ func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) 
 		}
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] SUCCESS: JSON processed - columns: %d, rows: %d", len(result.Columns), len(result.Rows))
 		return result, nil
-		
+
 	case "xml":
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing as XML")
 		result, err := previewXML(f)
@@ -65,7 +65,7 @@ func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) 
 		}
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] SUCCESS: XML processed - columns: %d, rows: %d", len(result.Columns), len(result.Rows))
 		return result, nil
-		
+
 	default:
 		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: Unsupported file type: %s", normalizedType)
 		return PreviewResult{}, errors.New("unsupported file type")
@@ -75,22 +75,65 @@ func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) 
 func (s *PreviewService) FromPG(params map[string]any) (PreviewResult, error) {
 	log.Printf("[PREVIEW_SERVICE] [FROM_PG] Processing PostgreSQL preview request")
 	log.Printf("[PREVIEW_SERVICE] [FROM_PG] Parameters: %+v", params)
-	
-	// Stub: return empty preview
-	log.Printf("[PREVIEW_SERVICE] [FROM_PG] WARNING: This is a stub implementation")
-	result := PreviewResult{
-		Columns:  []struct{ Name, Type string }{},
-		Rows:     []map[string]any{},
-		RowCount: 0,
+
+	// Извлекаем параметры подключения
+	var dsn, host string
+
+	if dsnParam, ok := params["dsn"]; ok && dsnParam != nil {
+		if dsnStr, ok := dsnParam.(*string); ok && dsnStr != nil {
+			dsn = *dsnStr
+		}
 	}
-	
-	log.Printf("[PREVIEW_SERVICE] [FROM_PG] SUCCESS: Returning empty preview (stub)")
+
+	if hostParam, ok := params["host"]; ok && hostParam != nil {
+		if hostStr, ok := hostParam.(*string); ok && hostStr != nil {
+			host = *hostStr
+		}
+	}
+
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] Connection params - DSN: %s, Host: %s",
+		maskSensitiveInfo(dsn), host)
+
+	// Пока что возвращаем mock данные с реалистичной структурой
+	// TODO: Реализовать реальное подключение к PostgreSQL
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] WARNING: Using mock data - PostgreSQL connection not implemented yet")
+
+	result := PreviewResult{
+		Columns: []struct{ Name, Type string }{
+			{Name: "id", Type: "integer"},
+			{Name: "name", Type: "string"},
+			{Name: "email", Type: "string"},
+			{Name: "created_at", Type: "datetime"},
+			{Name: "is_active", Type: "boolean"},
+		},
+		Rows: []map[string]any{
+			{"id": 1, "name": "John Doe", "email": "john@example.com", "created_at": "2023-01-01T10:00:00Z", "is_active": true},
+			{"id": 2, "name": "Jane Smith", "email": "jane@example.com", "created_at": "2023-01-02T11:00:00Z", "is_active": true},
+			{"id": 3, "name": "Bob Johnson", "email": "bob@example.com", "created_at": "2023-01-03T12:00:00Z", "is_active": false},
+		},
+		RowCount: 3,
+	}
+
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] SUCCESS: Returning mock preview - columns: %d, rows: %d",
+		len(result.Columns), len(result.Rows))
 	return result, nil
+}
+
+// maskSensitiveInfo маскирует чувствительную информацию в логах
+func maskSensitiveInfo(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	// Простая маскировка - показываем только первые и последние символы
+	if len(dsn) <= 8 {
+		return "***"
+	}
+	return dsn[:4] + "***" + dsn[len(dsn)-4:]
 }
 
 func previewCSV(r io.Reader) (PreviewResult, error) {
 	log.Printf("[PREVIEW_CSV] Starting CSV preview processing")
-	
+
 	br := bufio.NewReader(r)
 	// Peek первую строку для автоопределения разделителя
 	log.Printf("[PREVIEW_CSV] Detecting CSV separator")
@@ -101,24 +144,24 @@ func previewCSV(r io.Reader) (PreviewResult, error) {
 	cr := csv.NewReader(br)
 	cr.FieldsPerRecord = -1
 	cr.Comma = sep
-	
+
 	log.Printf("[PREVIEW_CSV] Reading CSV header")
 	head, err := cr.Read()
 	if err != nil {
 		log.Printf("[PREVIEW_CSV] ERROR: Failed to read header: %v", err)
 		return PreviewResult{}, fmt.Errorf("failed to read CSV header: %w", err)
 	}
-	
+
 	log.Printf("[PREVIEW_CSV] Header read - columns: %d", len(head))
 	for i, name := range head {
 		log.Printf("[PREVIEW_CSV] Column %d: %s", i, name)
 	}
-	
+
 	cols := make([]struct{ Name, Type string }, len(head))
 	for i, name := range head {
 		cols[i] = struct{ Name, Type string }{Name: name, Type: "string"}
 	}
-	
+
 	log.Printf("[PREVIEW_CSV] Reading data rows (max 100)")
 	rows := make([]map[string]any, 0, 100)
 	for len(rows) < 100 {
@@ -131,7 +174,7 @@ func previewCSV(r io.Reader) (PreviewResult, error) {
 			log.Printf("[PREVIEW_CSV] ERROR: Failed to read row %d: %v", len(rows), err)
 			return PreviewResult{}, fmt.Errorf("failed to read CSV row %d: %w", len(rows), err)
 		}
-		
+
 		row := make(map[string]any, len(head))
 		for i, name := range head {
 			val := ""
@@ -142,7 +185,7 @@ func previewCSV(r io.Reader) (PreviewResult, error) {
 		}
 		rows = append(rows, row)
 	}
-	
+
 	log.Printf("[PREVIEW_CSV] SUCCESS: Processed %d rows with %d columns", len(rows), len(cols))
 	return PreviewResult{Columns: cols, Rows: rows, RowCount: len(rows)}, nil
 }

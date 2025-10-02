@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Final Pipeline Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        .warning { background: #fff3e0; color: #f57c00; }
+        pre { white-space: pre-wrap; word-wrap: break-word; max-height: 200px; overflow-y: auto; }
+        .result-section { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; }
+        .step { margin: 20px 0; padding: 15px; border-left: 4px solid #2196f3; background: #f8f9fa; }
+        .step.completed { border-left-color: #4caf50; }
+        .step.error { border-left-color: #f44336; }
+    </style>
+</head>
+<body>
+    <h1>Final Pipeline Test</h1>
+    
+    <div>
+        <button id="startFullPipeline">Start Full Pipeline Test</button>
+        <button id="clearLogs">Clear Logs</button>
+    </div>
+    
+    <div id="status">Ready</div>
+    
+    <div id="steps">
+        <div id="step1" class="step">
+            <h3>Step 1: Analyze Data</h3>
+            <div>Status: <span id="step1Status">Pending</span></div>
+        </div>
+        <div id="step2" class="step">
+            <h3>Step 2: Create Pipeline</h3>
+            <div>Status: <span id="step2Status">Pending</span></div>
+        </div>
+    </div>
+    
+    <div id="logs"></div>
+    
+    <div id="results" style="display: none;">
+        <h2>Final Results</h2>
+        <div id="analyzeResults" class="result-section">
+            <h3>Analysis Results</h3>
+            <div id="analyzeContent"></div>
+        </div>
+        <div id="pipelineResults" class="result-section">
+            <h3>Pipeline Creation</h3>
+            <div id="pipelineContent"></div>
+        </div>
+    </div>
+    
+    <script>
+        let ws = null;
+        let analyzeJobId = null;
+        let pipelineId = null;
+        let analyzeComplete = false;
+        let analyzeResults = null;
+        
+        const status = document.getElementById('status');
+        const logs = document.getElementById('logs');
+        const results = document.getElementById('results');
+        
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.innerHTML = `<strong>${new Date().toISOString()}:</strong> ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        function updateStepStatus(stepNum, status, className = '') {
+            const stepElement = document.getElementById(`step${stepNum}`);
+            const statusElement = document.getElementById(`step${stepNum}Status`);
+            statusElement.textContent = status;
+            if (className) {
+                stepElement.className = `step ${className}`;
+            }
+        }
+        
+        function connectWebSocket() {
+            return new Promise((resolve, reject) => {
+                ws = new WebSocket('ws://localhost:8081/ws');
+                
+                ws.onopen = function(event) {
+                    log('WebSocket connected', 'success');
+                    resolve();
+                };
+                
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.type === 'done' && data.data.scope === 'analyze') {
+                            log('✅ ANALYZE COMPLETED!', 'success');
+                            analyzeComplete = true;
+                            analyzeResults = data.data.payload;
+                            updateStepStatus(1, 'Completed', 'completed');
+                            
+                            // Display analyze results
+                            displayAnalyzeResults(analyzeResults);
+                            
+                            // Proceed to create pipeline
+                            setTimeout(() => createPipeline(), 1000);
+                        }
+                        
+                        if (data.type === 'done' && data.data.scope === 'pipeline') {
+                            log('✅ PIPELINE CREATED!', 'success');
+                            updateStepStatus(2, 'Completed', 'completed');
+                            
+                            // Display pipeline results
+                            displayPipelineResults(data.data.payload);
+                            
+                            status.textContent = '🎉 Full pipeline completed successfully!';
+                            status.style.color = 'green';
+                            status.style.fontWeight = 'bold';
+                        }
+                        
+                        if (data.type === 'progress') {
+                            log(`📊 Progress: ${data.data.percent}% - ${data.data.stage}`, 'info');
+                        }
+                        
+                        if (data.type === 'error') {
+                            log(`❌ Error: ${JSON.stringify(data.data)}`, 'error');
+                            if (data.data.scope === 'analyze') {
+                                updateStepStatus(1, 'Error', 'error');
+                            } else if (data.data.scope === 'pipeline') {
+                                updateStepStatus(2, 'Error', 'error');
+                            }
+                        }
+                        
+                    } catch (e) {
+                        log(`Failed to parse WebSocket message: ${event.data}`, 'error');
+                    }
+                };
+                
+                ws.onerror = function(error) {
+                    log(`WebSocket error: ${error}`, 'error');
+                    reject(error);
+                };
+                
+                ws.onclose = function(event) {
+                    log(`WebSocket closed: ${event.code} - ${event.reason}`, 'info');
+                };
+            });
+        }
+        
+        function displayAnalyzeResults(payload) {
+            const content = document.getElementById('analyzeContent');
+            const rec = payload.recommendation;
+            const ddl = payload.ddl;
+            
+            content.innerHTML = `
+                <h4>Recommendation:</h4>
+                <p><strong>Target:</strong> ${rec.target}</p>
+                <p><strong>Confidence:</strong> ${(rec.confidence * 100).toFixed(1)}%</p>
+                <p><strong>Rationale:</strong> ${rec.rationale}</p>
+                <p><strong>Schedule:</strong> ${rec.schedule_hint}</p>
+                
+                <h4>Generated DDL:</h4>
+                <h5>ClickHouse:</h5>
+                <pre>${ddl.clickhouse}</pre>
+                <h5>PostgreSQL:</h5>
+                <pre>${ddl.postgresql}</pre>
+                <h5>HDFS:</h5>
+                <pre>${ddl.hdfs}</pre>
+            `;
+            
+            results.style.display = 'block';
+        }
+        
+        function displayPipelineResults(payload) {
+            const content = document.getElementById('pipelineContent');
+            content.innerHTML = `
+                <p><strong>Status:</strong> ${payload.status || 'Created'}</p>
+                <p><strong>Message:</strong> ${payload.message || 'Pipeline created successfully'}</p>
+                <pre>${JSON.stringify(payload, null, 2)}</pre>
+            `;
+        }
+        
+        async function startAnalyze() {
+            try {
+                updateStepStatus(1, 'Running');
+                log('Starting analyze request...', 'info');
+                
+                const analyzePayload = {
+                    preview: {
+                        columns: [
+                            {name: "ticket_id", type: "string"},
+                            {name: "ticket_price", type: "number"},
+                            {name: "event_id", type: "number"},
+                            {name: "is_active", type: "boolean"},
+                            {name: "created", type: "string"},
+                            {name: "start_datetime", type: "string"}
+                        ],
+                        rows: [
+                            {ticket_id: "T001", ticket_price: 100.5, event_id: 1, is_active: true, created: "2023-01-01T10:00:00Z", start_datetime: "2023-01-01T18:00:00Z"},
+                            {ticket_id: "T002", ticket_price: 150.0, event_id: 2, is_active: true, created: "2023-01-02T11:00:00Z", start_datetime: "2023-01-02T19:00:00Z"}
+                        ],
+                        rowCount: 2
+                    }
+                };
+                
+                const response = await fetch('http://localhost:8081/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(analyzePayload)
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                const result = await response.json();
+                analyzeJobId = result.job_id || result.jobID;
+                
+                log(`✅ Analyze started with job ID: ${analyzeJobId}`, 'success');
+                
+                // Subscribe to analyze updates
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    data: { topic: 'analyze', id: analyzeJobId }
+                }));
+                
+            } catch (error) {
+                log(`❌ Analyze failed: ${error.message}`, 'error');
+                updateStepStatus(1, 'Error', 'error');
+                throw error;
+            }
+        }
+        
+        async function createPipeline() {
+            try {
+                updateStepStatus(2, 'Running');
+                log('Creating pipeline...', 'info');
+                
+                const pipelinePayload = {
+                    sourceType: "csv",
+                    source: {
+                        kind: "file",
+                        type: "csv",
+                        pathOrUrl: "" // Empty - file was uploaded via preview
+                    },
+                    preview: {
+                        columns: [
+                            {name: "ticket_id", type: "string"},
+                            {name: "ticket_price", type: "number"},
+                            {name: "event_id", type: "number"},
+                            {name: "is_active", type: "boolean"},
+                            {name: "created", type: "string"},
+                            {name: "start_datetime", type: "string"}
+                        ],
+                        rows: [
+                            {ticket_id: "T001", ticket_price: 100.5, event_id: 1, is_active: true, created: "2023-01-01T10:00:00Z", start_datetime: "2023-01-01T18:00:00Z"},
+                            {ticket_id: "T002", ticket_price: 150.0, event_id: 2, is_active: true, created: "2023-01-02T11:00:00Z", start_datetime: "2023-01-02T19:00:00Z"}
+                        ],
+                        rowCount: 2
+                    },
+                    target: analyzeResults.recommendation.target,
+                    ddl: analyzeResults.ddl,
+                    schedule: {
+                        cron: analyzeResults.recommendation.schedule_hint,
+                        incrementalMode: "none",
+                        incrementalColumn: ""
+                    }
+                };
+                
+                const response = await fetch('http://localhost:8081/api/pipelines', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(pipelinePayload)
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                const result = await response.json();
+                pipelineId = result.id;
+                
+                log(`✅ Pipeline created with ID: ${pipelineId}`, 'success');
+                
+                // Subscribe to pipeline updates
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    data: { topic: 'pipeline', id: pipelineId }
+                }));
+                
+            } catch (error) {
+                log(`❌ Pipeline creation failed: ${error.message}`, 'error');
+                updateStepStatus(2, 'Error', 'error');
+                
+                // Show error details
+                try {
+                    const errorData = JSON.parse(error.message.split(': ')[1]);
+                    log(`Error details: ${JSON.stringify(errorData, null, 2)}`, 'error');
+                } catch (e) {
+                    // Error message is not JSON
+                }
+            }
+        }
+        
+        async function startFullPipeline() {
+            try {
+                status.textContent = 'Starting full pipeline test...';
+                results.style.display = 'none';
+                
+                // Reset steps
+                updateStepStatus(1, 'Pending');
+                updateStepStatus(2, 'Pending');
+                
+                // Connect WebSocket
+                await connectWebSocket();
+                
+                // Start analyze
+                await startAnalyze();
+                
+            } catch (error) {
+                log(`❌ Full pipeline test failed: ${error.message}`, 'error');
+                status.textContent = `Test failed: ${error.message}`;
+            }
+        }
+        
+        document.getElementById('startFullPipeline').addEventListener('click', startFullPipeline);
+        document.getElementById('clearLogs').addEventListener('click', () => {
+            logs.innerHTML = '';
+            results.style.display = 'none';
+            updateStepStatus(1, 'Pending');
+            updateStepStatus(2, 'Pending');
+        });
+    </script>
+</body>
+</html>

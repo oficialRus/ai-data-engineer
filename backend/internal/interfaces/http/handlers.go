@@ -377,9 +377,11 @@ func validateSource(sourceType string, raw json.RawMessage) error {
 			return errors.New("Некорректные параметры: source.file.type")
 		}
 
+		// PathOrURL может быть пустым, если файл уже был загружен через preview
 		if f.PathOrURL == "" {
-			log.Printf("[VALIDATION] [SOURCE] ERROR: Empty pathOrUrl")
-			return errors.New("Некорректные параметры: source.file.pathOrUrl")
+			log.Printf("[VALIDATION] [SOURCE] WARNING: Empty pathOrUrl - assuming file was uploaded via preview")
+		} else {
+			log.Printf("[VALIDATION] [SOURCE] PathOrURL provided: %s", f.PathOrURL)
 		}
 
 		if sourceType != "postgresql" && sourceType != f.Type {
