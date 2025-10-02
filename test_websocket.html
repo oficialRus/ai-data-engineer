@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
+    
+    <script>
+        const status = document.getElementById('status');
+        const messages = document.getElementById('messages');
+        
+        function log(message) {
+            const div = document.createElement('div');
+            div.textContent = new Date().toISOString() + ': ' + message;
+            messages.appendChild(div);
+            console.log(message);
+        }
+        
+        // Connect to WebSocket
+        const ws = new WebSocket('ws://localhost:8081/ws');
+        
+        ws.onopen = function(event) {
+            status.textContent = 'Connected';
+            status.style.color = 'green';
+            log('WebSocket connection opened');
+            
+            // Test subscribe command
+            ws.send(JSON.stringify({
+                type: 'subscribe',
+                data: {
+                    topic: 'test',
+                    id: 'test-123'
+                }
+            }));
+        };
+        
+        ws.onmessage = function(event) {
+            log('Received: ' + event.data);
+            try {
+                const data = JSON.parse(event.data);
+                log('Parsed message: ' + JSON.stringify(data, null, 2));
+            } catch (e) {
+                log('Failed to parse message as JSON');
+            }
+        };
+        
+        ws.onerror = function(error) {
+            status.textContent = 'Error';
+            status.style.color = 'red';
+            log('WebSocket error: ' + error);
+        };
+        
+        ws.onclose = function(event) {
+            status.textContent = 'Disconnected';
+            status.style.color = 'red';
+            log('WebSocket connection closed: ' + event.code + ' - ' + event.reason);
+        };
+    </script>
+</body>
+</html>
