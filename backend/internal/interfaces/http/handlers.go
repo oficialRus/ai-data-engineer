@@ -271,7 +271,7 @@ func validateAnalyze(req domain.AnalyzeRequest) error {
 	}
 	if req.Preview.RowCount < 0 {
 		log.Printf("[VALIDATION] [ANALYZE] ERROR: Negative rowCount: %d", req.Preview.RowCount)
-		return errors.New("Некорректные данные предпросмотра: отрицательный rowCount")
+		return errors.New("Некорректные данные предпросмотра: оотрицательный rowCount")
 	}
 	if len(req.Preview.Rows) > 100 {
 		log.Printf("[VALIDATION] [ANALYZE] ERROR: Too many rows: %d (max 100)", len(req.Preview.Rows))
