@@ -77,6 +77,7 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/scripts:/opt/airflow/scripts
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -331,5 +332,129 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # === DATA STORAGE SERVICES ===
+  # PostgreSQL для хранения данных (отдельно от Airflow)
+  postgres-data:
+    image: postgres:16
+    container_name: postgres-data
+    environment:
+      POSTGRES_USER: datauser
+      POSTGRES_PASSWORD: datapass
+      POSTGRES_DB: datawarehouse
+    ports:
+      - "5433:5432"  # Другой порт, чтобы не конфликтовать с Airflow PostgreSQL
+    volumes:
+      - postgres-data-volume:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d  # Для инициализационных скриптов
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "datauser", "-d", "datawarehouse"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - data-network
+
+  # ClickHouse для аналитики
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: clickuser
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PASSWORD: clickpass
+    ports:
+      - "8123:8123"  # HTTP интерфейс
+      - "9000:9000"  # Native интерфейс
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+      - ./clickhouse-config:/etc/clickhouse-server/config.d  # Дополнительные конфиги
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: always
+    networks:
+      - data-network
+
+  # HDFS NameNode
+  hdfs-namenode:
+    image: apache/hadoop:3.3.6
+    container_name: hdfs-namenode
+    environment:
+      CLUSTER_NAME: hadoop-cluster
+      CORE_CONF_fs_defaultFS: hdfs://hdfs-namenode:9820
+      CORE_CONF_hadoop_http_staticuser_user: root
+      CORE_CONF_hadoop_proxyuser_hue_hosts: "*"
+      CORE_CONF_hadoop_proxyuser_hue_groups: "*"
+      HDFS_CONF_dfs_webhdfs_enabled: "true"
+      HDFS_CONF_dfs_permissions_enabled: "false"
+      HDFS_CONF_dfs_nameservices: hdfs-cluster
+      HDFS_CONF_dfs_ha_namenodes_hdfs___cluster: nn1
+      HDFS_CONF_dfs_namenode_rpc___address_hdfs___cluster_nn1: hdfs-namenode:9820
+      HDFS_CONF_dfs_namenode_http___address_hdfs___cluster_nn1: hdfs-namenode:9870
+    ports:
+      - "9870:9870"  # NameNode Web UI
+      - "9820:9820"  # NameNode RPC
+    volumes:
+      - hdfs-namenode:/opt/hadoop/dfs/name
+    command: ["hdfs", "namenode"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: always
+    networks:
+      - data-network
+
+  # HDFS DataNode
+  hdfs-datanode:
+    image: apache/hadoop:3.3.6
+    container_name: hdfs-datanode
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://hdfs-namenode:9820
+      CORE_CONF_hadoop_http_staticuser_user: root
+      HDFS_CONF_dfs_webhdfs_enabled: "true"
+      HDFS_CONF_dfs_permissions_enabled: "false"
+      HDFS_CONF_dfs_datanode_use_datanode_hostname: "false"
+      HDFS_CONF_dfs_client_use_datanode_hostname: "false"
+      HDFS_CONF_dfs_datanode_data_dir: /opt/hadoop/dfs/data
+    ports:
+      - "9864:9864"  # DataNode Web UI
+    volumes:
+      - hdfs-datanode:/opt/hadoop/dfs/data
+    command: ["hdfs", "datanode"]
+    depends_on:
+      hdfs-namenode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9864/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: always
+    networks:
+      - data-network
+
+networks:
+  data-network:
+    driver: bridge
+
 volumes:
   postgres-db-volume:
+  postgres-data-volume:
+  clickhouse-data:
+  clickhouse-logs:
+  hdfs-namenode:
+  hdfs-datanode:

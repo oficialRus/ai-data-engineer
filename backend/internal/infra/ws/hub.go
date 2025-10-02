@@ -34,6 +34,7 @@ type hubBroadcast struct {
 }
 
 func NewHub() *Hub {
+	log.Printf("[HUB] Creating new WebSocket hub")
 	return &Hub{
 		subscribers: make(map[SubscriptionKey]map[*websocket.Conn]struct{}),
 		register:    make(chan hubRegister),
@@ -43,6 +44,7 @@ func NewHub() *Hub {
 }
 
 func (h *Hub) Run() {
+	log.Printf("[HUB] Starting WebSocket hub event loop")
 	for {
 		select {
 		case reg := <-h.register:
@@ -50,11 +52,14 @@ func (h *Hub) Run() {
 				h.subscribers[reg.key] = make(map[*websocket.Conn]struct{})
 			}
 			h.subscribers[reg.key][reg.client] = struct{}{}
+			log.Printf("[HUB] Client registered for key: %s (total subscribers: %d)", reg.key, len(h.subscribers[reg.key]))
 		case unreg := <-h.unregister:
 			if set, ok := h.subscribers[unreg.key]; ok {
 				delete(set, unreg.client)
+				log.Printf("[HUB] Client unregistered from key: %s (remaining subscribers: %d)", unreg.key, len(set))
 				if len(set) == 0 {
 					delete(h.subscribers, unreg.key)
+					log.Printf("[HUB] No more subscribers for key: %s, removing subscription", unreg.key)
 				}
 			}
 		case msg := <-h.broadcast:

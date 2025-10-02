@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/user/ai-data-engineer/backend/internal/config"
+	domain "github.com/user/ai-data-engineer/backend/internal/domain"
 	infra "github.com/user/ai-data-engineer/backend/internal/infra/ws"
 )
 
@@ -23,8 +24,9 @@ type AnalyzeService struct {
 }
 
 type PipelineService struct {
-	Hub *infra.Hub
-	Cfg config.AppConfig
+	Hub          *infra.Hub
+	Cfg          config.AppConfig
+	DAGGenerator *DAGGeneratorService
 }
 
 func (s *AnalyzeService) StartAnalyze(preview json.RawMessage) (string, error) {
@@ -35,6 +37,23 @@ func (s *AnalyzeService) StartAnalyze(preview json.RawMessage) (string, error) {
 
 func (s *PipelineService) CreatePipeline(req json.RawMessage) (string, error) {
 	id := uuid.NewString()
+
+	// Парсим запрос для генерации DAG
+	var pipelineReq domain.CreatePipelineRequest
+	if err := json.Unmarshal(req, &pipelineReq); err != nil {
+		return "", fmt.Errorf("failed to parse pipeline request: %w", err)
+	}
+
+	// Генерируем DAG файл
+	if s.DAGGenerator != nil {
+		if err := s.DAGGenerator.GenerateDAG(pipelineReq, id); err != nil {
+			log.Printf("[PIPELINE] Failed to generate DAG for pipeline %s: %v", id, err)
+			// Не прерываем создание пайплайна из-за ошибки генерации DAG
+		} else {
+			log.Printf("[PIPELINE] DAG generated successfully for pipeline %s", id)
+		}
+	}
+
 	go s.runPipeline(id, req)
 	return id, nil
 }

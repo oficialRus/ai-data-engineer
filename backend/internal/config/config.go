@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -25,7 +26,9 @@ type AppConfig struct {
 }
 
 func Load() AppConfig {
-	return AppConfig{
+	log.Printf("[CONFIG] Loading application configuration...")
+
+	cfg := AppConfig{
 		Server:         ServerConfig{Addr: getEnv("SERVER_ADDR", ":8081"), AllowedOrigins: parseCSV(getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://45.150.9.52:3000"))},
 		Limits:         LimitsConfig{MaxFileSizeBytes: parseSize(getEnv("MAX_FILE_SIZE", "10MB"))},
 		MLBaseURL:      getEnv("ML_BASE_URL", "http://localhost:8000"),
@@ -33,6 +36,17 @@ func Load() AppConfig {
 		MLPipelinePath: getEnv("ML_PIPELINE_PATH", "/pipelines"),
 		MLTimeoutSec:   int(parseSize(getEnv("ML_TIMEOUT_SEC", "30"))),
 	}
+
+	log.Printf("[CONFIG] Server address: %s", cfg.Server.Addr)
+	log.Printf("[CONFIG] Allowed origins: %v", cfg.Server.AllowedOrigins)
+	log.Printf("[CONFIG] Max file size: %d bytes (%.2f MB)", cfg.Limits.MaxFileSizeBytes, float64(cfg.Limits.MaxFileSizeBytes)/(1024*1024))
+	log.Printf("[CONFIG] ML base URL: %s", cfg.MLBaseURL)
+	log.Printf("[CONFIG] ML analyze path: %s", cfg.MLAnalyzePath)
+	log.Printf("[CONFIG] ML pipeline path: %s", cfg.MLPipelinePath)
+	log.Printf("[CONFIG] ML timeout: %d seconds", cfg.MLTimeoutSec)
+	log.Printf("[CONFIG] Configuration loaded successfully")
+
+	return cfg
 }
 
 func getEnv(key, def string) string {
@@ -45,20 +59,33 @@ func getEnv(key, def string) string {
 func parseSize(s string) int64 {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	if strings.HasSuffix(s, "MB") {
-		n, _ := strconv.ParseInt(strings.TrimSuffix(s, "MB"), 10, 64)
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, "MB"), 10, 64)
+		if err != nil {
+			log.Printf("[CONFIG] WARNING: Failed to parse MB size '%s', using default 10MB: %v", s, err)
+			return 10 * 1024 * 1024
+		}
 		return n * 1024 * 1024
 	}
 	if strings.HasSuffix(s, "KB") {
-		n, _ := strconv.ParseInt(strings.TrimSuffix(s, "KB"), 10, 64)
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, "KB"), 10, 64)
+		if err != nil {
+			log.Printf("[CONFIG] WARNING: Failed to parse KB size '%s', using default 10MB: %v", s, err)
+			return 10 * 1024 * 1024
+		}
 		return n * 1024
 	}
 	if strings.HasSuffix(s, "B") {
-		n, _ := strconv.ParseInt(strings.TrimSuffix(s, "B"), 10, 64)
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, "B"), 10, 64)
+		if err != nil {
+			log.Printf("[CONFIG] WARNING: Failed to parse B size '%s', using default 10MB: %v", s, err)
+			return 10 * 1024 * 1024
+		}
 		return n
 	}
 	// plain number means bytes
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
+		log.Printf("[CONFIG] WARNING: Failed to parse size '%s', using default 10MB: %v", s, err)
 		return 10 * 1024 * 1024
 	}
 	return n

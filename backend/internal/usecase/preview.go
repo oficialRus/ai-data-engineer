@@ -292,10 +292,9 @@ func buildJSONPreview(rows []map[string]any) PreviewResult {
 }
 
 func inferJSONType(v any) string {
-	switch v.(type) {
+	switch s := v.(type) {
 	case string:
 		// Простой хинт: ISO8601 часто содержит '-' и ':'
-		s := v.(string)
 		if len(s) >= 19 && strings.Count(s, "-") >= 2 && strings.Count(s, ":") >= 2 {
 			return "datetime"
 		}
@@ -315,10 +314,6 @@ func inferJSONType(v any) string {
 // Ищет первый повторяющийся узел под корнем и извлекает его дочерние элементы как колонки
 func previewXML(r io.Reader) (PreviewResult, error) {
 	dec := xml.NewDecoder(bufio.NewReader(r))
-	type element struct {
-		name  string
-		depth int
-	}
 	depth := 0
 	rootOpened := false
 	var rowName string

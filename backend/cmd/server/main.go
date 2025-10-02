@@ -18,37 +18,50 @@ import (
 )
 
 func main() {
+	log.Printf("[MAIN] Starting AI Data Engineer server...")
 	cfg := config.Load()
+	log.Printf("[MAIN] Creating HTTP router...")
 	r := mux.NewRouter()
 
 	// Logging middleware
+	log.Printf("[MAIN] Setting up logging middleware...")
 	r.Use(loggingMiddleware())
 
 	// CORS middleware
+	log.Printf("[MAIN] Setting up CORS middleware with origins: %v", cfg.Server.AllowedOrigins)
 	r.Use(corsMiddleware(cfg.Server.AllowedOrigins))
 
 	// Preflight handler
+	log.Printf("[MAIN] Setting up preflight OPTIONS handler...")
 	r.Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// WebSocket hub
+	log.Printf("[MAIN] Initializing WebSocket hub...")
 	hub := infraWS.NewHub()
+	log.Printf("[MAIN] Starting WebSocket hub in background...")
 	go hub.Run()
 
 	// Usecases
+	log.Printf("[MAIN] Initializing services...")
 	analyzeSvc := &usecase.AnalyzeService{Hub: hub, Cfg: cfg}
-	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg}
+	dagGenerator := &usecase.DAGGeneratorService{Cfg: cfg}
+	pipelineSvc := &usecase.PipelineService{Hub: hub, Cfg: cfg, DAGGenerator: dagGenerator}
 	previewSvc := &usecase.PreviewService{}
+	log.Printf("[MAIN] Services initialized successfully")
 
 	// Interfaces
+	log.Printf("[MAIN] Initializing HTTP and WebSocket handlers...")
 	httpHandlers := &httpiface.HTTPHandlers{AnalyzeSvc: analyzeSvc, PipelineSvc: pipelineSvc, PreviewSvc: previewSvc, Cfg: cfg}
 	wsHandlers := &wsiface.WSHandlers{Hub: hub}
 
+	log.Printf("[MAIN] Registering API routes...")
 	r.HandleFunc("/api/preview", httpHandlers.Preview).Methods(http.MethodPost)
 	r.HandleFunc("/api/analyze", httpHandlers.Analyze).Methods(http.MethodPost)
 	r.HandleFunc("/api/pipelines", httpHandlers.CreatePipeline).Methods(http.MethodPost)
 	r.HandleFunc("/ws", wsHandlers.HandleWS)
+	log.Printf("[MAIN] API routes registered successfully")
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
