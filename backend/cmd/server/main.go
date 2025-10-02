@@ -20,7 +20,7 @@ func main() {
 
 	// Logging middleware
 	r.Use(loggingMiddleware())
-	
+
 	// CORS middleware
 	r.Use(corsMiddleware(cfg.Server.AllowedOrigins))
 
@@ -108,32 +108,32 @@ func loggingMiddleware() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			
+
 			// Log incoming request
-			log.Printf("[SERVER] [%s] %s %s from %s", 
-				start.Format("15:04:05.000"), 
-				r.Method, 
-				r.URL.Path, 
+			log.Printf("[SERVER] [%s] %s %s from %s",
+				start.Format("15:04:05.000"),
+				r.Method,
+				r.URL.Path,
 				r.RemoteAddr)
-			
+
 			// Log headers
 			log.Printf("[SERVER] User-Agent: %s", r.Header.Get("User-Agent"))
 			log.Printf("[SERVER] Content-Type: %s", r.Header.Get("Content-Type"))
 			log.Printf("[SERVER] Content-Length: %s", r.Header.Get("Content-Length"))
-			
+
 			// Create a response writer wrapper to capture status code
 			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-			
+
 			// Process request
 			next.ServeHTTP(wrapped, r)
-			
+
 			// Log response
 			duration := time.Since(start)
-			log.Printf("[SERVER] [%s] %s %s -> %d (%v)", 
+			log.Printf("[SERVER] [%s] %s %s -> %d (%v)",
 				time.Now().Format("15:04:05.000"),
-				r.Method, 
-				r.URL.Path, 
-				wrapped.statusCode, 
+				r.Method,
+				r.URL.Path,
+				wrapped.statusCode,
 				duration)
 		})
 	}
