@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -94,8 +95,22 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request, onCommand func(cm
 			Data json.RawMessage `json:"data"`
 		}
 		if err := conn.ReadJSON(&cmd); err != nil {
-			log.Printf("[WEBSOCKET] Connection closed or error reading JSON from %s: %v", r.RemoteAddr, err)
-			return
+			// Check if it's a JSON parsing error vs connection closed
+			if strings.Contains(err.Error(), "invalid character") {
+				log.Printf("[WEBSOCKET] Invalid JSON received from %s: %v", r.RemoteAddr, err)
+				// Send error response and continue listening
+				_ = conn.WriteJSON(map[string]any{
+					"type": "error",
+					"data": map[string]any{
+						"reason":  "Invalid JSON format",
+						"details": "Please send valid JSON messages",
+					},
+				})
+				continue
+			} else {
+				log.Printf("[WEBSOCKET] Connection closed from %s: %v", r.RemoteAddr, err)
+				return
+			}
 		}
 
 		log.Printf("[WEBSOCKET] Received command from %s: type=%s, data_size=%d", r.RemoteAddr, cmd.Type, len(cmd.Data))
