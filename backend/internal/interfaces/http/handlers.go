@@ -384,7 +384,7 @@ func validateSource(sourceType string, raw json.RawMessage) error {
 
 		if sourceType != "postgresql" && sourceType != f.Type {
 			log.Printf("[VALIDATION] [SOURCE] ERROR: SourceType mismatch - expected: %s, got: %s", f.Type, sourceType)
-			return 11:57
+			return fmt.Errorf("Некорректные параметры: sourceType должен совпадать с типом файла")
 		}
 
 		log.Printf("[VALIDATION] [SOURCE] File source validation passed")
