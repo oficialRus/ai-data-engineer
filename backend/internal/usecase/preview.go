@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"mime/multipart"
 	"strings"
 )
@@ -21,54 +23,115 @@ type PreviewResult struct {
 type PreviewService struct{}
 
 func (s *PreviewService) FromFile(fileHeader *multipart.FileHeader, typ string) (PreviewResult, error) {
+	log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing file: %s, type: %s, size: %d", fileHeader.Filename, typ, fileHeader.Size)
+	
 	f, err := fileHeader.Open()
 	if err != nil {
-		return PreviewResult{}, err
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: Failed to open file: %v", err)
+		return PreviewResult{}, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-	switch strings.ToLower(typ) {
+	
+	normalizedType := strings.ToLower(typ)
+	log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Normalized file type: %s", normalizedType)
+	
+	switch normalizedType {
 	case "csv":
-		return previewCSV(f)
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing as CSV")
+		result, err := previewCSV(f)
+		if err != nil {
+			log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: CSV processing failed: %v", err)
+			return PreviewResult{}, fmt.Errorf("CSV processing failed: %w", err)
+		}
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] SUCCESS: CSV processed - columns: %d, rows: %d", len(result.Columns), len(result.Rows))
+		return result, nil
+		
 	case "json":
-		return previewJSON(f)
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing as JSON")
+		result, err := previewJSON(f)
+		if err != nil {
+			log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: JSON processing failed: %v", err)
+			return PreviewResult{}, fmt.Errorf("JSON processing failed: %w", err)
+		}
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] SUCCESS: JSON processed - columns: %d, rows: %d", len(result.Columns), len(result.Rows))
+		return result, nil
+		
 	case "xml":
-		return previewXML(f)
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] Processing as XML")
+		result, err := previewXML(f)
+		if err != nil {
+			log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: XML processing failed: %v", err)
+			return PreviewResult{}, fmt.Errorf("XML processing failed: %w", err)
+		}
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] SUCCESS: XML processed - columns: %d, rows: %d", len(result.Columns), len(result.Rows))
+		return result, nil
+		
 	default:
+		log.Printf("[PREVIEW_SERVICE] [FROM_FILE] ERROR: Unsupported file type: %s", normalizedType)
 		return PreviewResult{}, errors.New("unsupported file type")
 	}
 }
 
 func (s *PreviewService) FromPG(params map[string]any) (PreviewResult, error) {
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] Processing PostgreSQL preview request")
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] Parameters: %+v", params)
+	
 	// Stub: return empty preview
-	return PreviewResult{Columns: []struct{ Name, Type string }{}, Rows: []map[string]any{}, RowCount: 0}, nil
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] WARNING: This is a stub implementation")
+	result := PreviewResult{
+		Columns:  []struct{ Name, Type string }{},
+		Rows:     []map[string]any{},
+		RowCount: 0,
+	}
+	
+	log.Printf("[PREVIEW_SERVICE] [FROM_PG] SUCCESS: Returning empty preview (stub)")
+	return result, nil
 }
 
 func previewCSV(r io.Reader) (PreviewResult, error) {
+	log.Printf("[PREVIEW_CSV] Starting CSV preview processing")
+	
 	br := bufio.NewReader(r)
 	// Peek первую строку для автоопределения разделителя
+	log.Printf("[PREVIEW_CSV] Detecting CSV separator")
 	line, _ := br.Peek(4096)
 	sep := detectCSVSeparator(string(line))
+	log.Printf("[PREVIEW_CSV] Detected separator: %q", sep)
 
 	cr := csv.NewReader(br)
 	cr.FieldsPerRecord = -1
 	cr.Comma = sep
+	
+	log.Printf("[PREVIEW_CSV] Reading CSV header")
 	head, err := cr.Read()
 	if err != nil {
-		return PreviewResult{}, err
+		log.Printf("[PREVIEW_CSV] ERROR: Failed to read header: %v", err)
+		return PreviewResult{}, fmt.Errorf("failed to read CSV header: %w", err)
 	}
+	
+	log.Printf("[PREVIEW_CSV] Header read - columns: %d", len(head))
+	for i, name := range head {
+		log.Printf("[PREVIEW_CSV] Column %d: %s", i, name)
+	}
+	
 	cols := make([]struct{ Name, Type string }, len(head))
 	for i, name := range head {
 		cols[i] = struct{ Name, Type string }{Name: name, Type: "string"}
 	}
+	
+	log.Printf("[PREVIEW_CSV] Reading data rows (max 100)")
 	rows := make([]map[string]any, 0, 100)
 	for len(rows) < 100 {
 		rec, err := cr.Read()
 		if err == io.EOF {
+			log.Printf("[PREVIEW_CSV] Reached end of file at row %d", len(rows))
 			break
 		}
 		if err != nil {
-			return PreviewResult{}, err
+			log.Printf("[PREVIEW_CSV] ERROR: Failed to read row %d: %v", len(rows), err)
+			return PreviewResult{}, fmt.Errorf("failed to read CSV row %d: %w", len(rows), err)
 		}
+		
 		row := make(map[string]any, len(head))
 		for i, name := range head {
 			val := ""
@@ -79,6 +142,8 @@ func previewCSV(r io.Reader) (PreviewResult, error) {
 		}
 		rows = append(rows, row)
 	}
+	
+	log.Printf("[PREVIEW_CSV] SUCCESS: Processed %d rows with %d columns", len(rows), len(cols))
 	return PreviewResult{Columns: cols, Rows: rows, RowCount: len(rows)}, nil
 }
 
